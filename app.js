@@ -1,0 +1,5375 @@
+const DB_NAME = "lazyButDataV4";
+const DB_VERSION = 1;
+const TRADE_STORE = "trades";
+const IMAGE_STORE = "images";
+
+const STORAGE_KEYS = {
+  LEGACY_WIPE_FLAG: "lazyButDataLegacyWipedV4",
+  LEGACY_STORAGE_KEY: "lazyButDataTradesV3",
+  DEFAULTS_KEY: "lazyButDataDefaultsV4",
+  PAIR_REGISTRY_KEY: "lazyButDataPairsV4",
+  THEME_KEY: "lazyButDataThemeV1",
+  SETTINGS_KEY: "lazyButDataSettingsV1",
+};
+
+const ADD_PAIR_OPTION_VALUE = "__ADD_PAIR_OPTION__";
+
+const PAIRS = ["GBPUSD", "EURUSD", "USDJPY", "XAUUSD", "NAS100"];
+const OUTCOMES = ["Full Win", "Partial + BE", "Breakeven", "Full Loss"];
+const SESSION_OPTIONS = ["London", "NY", "Asian"];
+
+function createBaseSettings() {
+  return {
+    showInsightReel: true,
+    strategyMode: "all",
+  };
+}
+
+const {
+  LEGACY_WIPE_FLAG,
+  LEGACY_STORAGE_KEY,
+  DEFAULTS_KEY,
+  PAIR_REGISTRY_KEY,
+  THEME_KEY,
+  SETTINGS_KEY,
+} = STORAGE_KEYS;
+
+const DEFAULT_STRATEGIES = ["ICC", "SMC"];
+
+const INTEGRITY_ORDER = [
+  "full_confluence",
+  "one_soft_confluence_missing",
+  "multiple_soft_confluences_missing",
+  "hard_invalidation_present",
+];
+
+const CONFLUENCE_RULES = {
+  ICC: {
+    required: [
+      "HTF bias aligned",
+      "Clear indication / expansion leg present",
+      "Proper correction / sweep formed",
+      "Valid 15m MSS body close",
+    ],
+    quality: ["Entry on valid pullback"],
+  },
+  SMC: {
+    required: [
+      "HTF bias aligned",
+      "Clear liquidity sweep",
+      "Valid MSS / displacement body close",
+      "FVG present",
+    ],
+    quality: ["Valid RTO into FVG + OB/Breaker"],
+  },
+};
+
+function integrityLabel(value) {
+  switch (value) {
+    case "full_confluence":
+      return "Full confluence";
+    case "one_soft_confluence_missing":
+      return "One soft confluence missing";
+    case "multiple_soft_confluences_missing":
+      return "Multiple soft confluences missing";
+    default:
+      return "Hard invalidation present";
+  }
+}
+
+const TAB_INSIGHTS = {
+  performance: [
+    "total_trades",
+    "closed_trades",
+    "open_trades",
+    "net_pnl",
+    "gross_profit",
+    "gross_loss",
+    "win_rate",
+    "loss_rate",
+    "breakeven_rate",
+    "profit_factor",
+    "expectancy_per_trade",
+    "average_win",
+    "average_loss",
+    "win_loss_size_ratio",
+    "outcome_distribution",
+  ],
+  risk: [
+    "equity_curve",
+    "drawdown_curve",
+    "max_drawdown",
+    "current_drawdown",
+    "longest_drawdown_duration",
+    "best_trade",
+    "worst_trade",
+    "max_win_streak",
+    "max_loss_streak",
+    "recovery_factor",
+  ],
+  confluence: [
+    "strategy_mix",
+    "strategy_net_pnl",
+    "strategy_win_rate",
+    "confluence_score_distribution",
+    "setup_integrity_distribution",
+    "setup_grade_distribution",
+    "missing_confluence_frequency_overall",
+    "missing_required_frequency",
+    "missing_quality_frequency",
+    "full_soft_hard_performance",
+    "confluence_compliance_trend",
+    "grade_vs_pnl_distribution",
+  ],
+  sessions: [
+    "session_mix_share",
+    "session_net_pnl",
+    "session_win_rate",
+    "session_expectancy",
+    "session_x_strategy_heatmap",
+    "session_x_pair_heatmap",
+    "hour_trade_frequency",
+    "hour_expectancy",
+    "day_of_week_performance",
+    "time_to_close_distribution",
+  ],
+  market: [
+    "pair_pnl_ranking",
+    "pair_win_rate_ranking",
+    "pair_expectancy_ranking",
+    "direction_split_pnl",
+    "direction_split_win_rate",
+    "lot_size_vs_pnl_scatter",
+    "lot_size_bucket_expectancy",
+    "open_trade_aging",
+  ],
+  behavior: [
+    "image_completeness_rate",
+    "before_presence_rate",
+    "after_presence_rate",
+    "note_usage_and_median_length",
+    "edit_frequency_per_trade",
+  ],
+};
+
+const METRIC_LABELS = {
+  total_trades: "Total Trades",
+  closed_trades: "Closed Trades",
+  open_trades: "Open Trades",
+  net_pnl: "Net PnL",
+  gross_profit: "Gross Profit",
+  gross_loss: "Gross Loss",
+  win_rate: "Win Rate",
+  loss_rate: "Loss Rate",
+  breakeven_rate: "Breakeven Rate",
+  profit_factor: "Profit Factor",
+  expectancy_per_trade: "Expectancy / Trade",
+  average_win: "Average Win",
+  average_loss: "Average Loss",
+  win_loss_size_ratio: "Win/Loss Size Ratio",
+  outcome_distribution: "Outcome Distribution",
+  equity_curve: "Equity Curve",
+  drawdown_curve: "Drawdown Curve",
+  max_drawdown: "Max Drawdown",
+  current_drawdown: "Current Drawdown",
+  longest_drawdown_duration: "Longest Drawdown Duration",
+  best_trade: "Best Trade",
+  worst_trade: "Worst Trade",
+  max_win_streak: "Max Win Streak",
+  max_loss_streak: "Max Loss Streak",
+  recovery_factor: "Recovery Factor",
+  strategy_mix: "Strategy Mix",
+  strategy_net_pnl: "Strategy Net PnL",
+  strategy_win_rate: "Strategy Win Rate",
+  confluence_score_distribution: "Confluence Score Distribution",
+  setup_integrity_distribution: "Setup Integrity Distribution",
+  setup_grade_distribution: "Setup Grade Distribution",
+  missing_confluence_frequency_overall: "Missing Confluence Frequency",
+  missing_required_frequency: "Missing Required Frequency",
+  missing_quality_frequency: "Missing Quality Frequency",
+  full_soft_hard_performance: "Full/Soft/Hard Performance",
+  confluence_compliance_trend: "Confluence Compliance Trend",
+  grade_vs_pnl_distribution: "Grade vs PnL Distribution",
+  session_mix_share: "Session Mix Share",
+  session_net_pnl: "Session Net PnL",
+  session_win_rate: "Session Win Rate",
+  session_expectancy: "Session Expectancy",
+  session_x_strategy_heatmap: "Session x Strategy Heatmap",
+  session_x_pair_heatmap: "Session x Pair Heatmap",
+  hour_trade_frequency: "Hour-of-Day Frequency",
+  hour_expectancy: "Hour-of-Day Expectancy",
+  day_of_week_performance: "Day-of-Week Performance",
+  time_to_close_distribution: "Time-to-Close Distribution",
+  pair_pnl_ranking: "Pair PnL Ranking",
+  pair_win_rate_ranking: "Pair Win Rate Ranking",
+  pair_expectancy_ranking: "Pair Expectancy Ranking",
+  direction_split_pnl: "Direction Split PnL",
+  direction_split_win_rate: "Direction Split Win Rate",
+  lot_size_vs_pnl_scatter: "Lot Size vs PnL Scatter",
+  lot_size_bucket_expectancy: "Lot Bucket Expectancy",
+  open_trade_aging: "Open Trade Aging",
+  image_completeness_rate: "Image Completeness Rate",
+  before_presence_rate: "Before Image Presence",
+  after_presence_rate: "After Image Presence",
+  note_usage_and_median_length: "Note Usage + Median Length",
+  edit_frequency_per_trade: "Edit Frequency / Trade",
+};
+
+function createToastController(toastEl, options = {}) {
+  const defaultDuration = Number.isFinite(options.defaultDuration) ? options.defaultDuration : 1800;
+  const queue = [];
+  let timer = null;
+  let active = false;
+
+  function hideAndContinue() {
+    toastEl.className = "toast";
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      active = false;
+      flush();
+    }, 120);
+  }
+
+  function flush() {
+    if (active || !queue.length) {
+      return;
+    }
+    const { message, tone, duration } = queue.shift();
+    active = true;
+    toastEl.textContent = message;
+    toastEl.className = "toast show" + (tone ? ` ${tone}` : "");
+
+    window.clearTimeout(timer);
+    timer = window.setTimeout(hideAndContinue, duration);
+  }
+
+  return {
+    show(message, tone = "", duration = defaultDuration) {
+      const text = String(message || "").trim();
+      if (!text) {
+        return;
+      }
+      queue.push({
+        message: text,
+        tone: tone || "",
+        duration: Number.isFinite(duration) ? duration : defaultDuration,
+      });
+      flush();
+    },
+    clear() {
+      queue.length = 0;
+      active = false;
+      window.clearTimeout(timer);
+      toastEl.className = "toast";
+    },
+  };
+}
+
+function createIdbStorage(options = {}) {
+  const {
+    dbName = "lazyButDataV4",
+    dbVersion = 1,
+    tradeStore = "trades",
+    imageStore = "images",
+  } = options;
+
+  let dbPromise;
+
+  async function openDb() {
+    if (dbPromise) {
+      return dbPromise;
+    }
+
+    dbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(dbName, dbVersion);
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(tradeStore)) {
+          db.createObjectStore(tradeStore, { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains(imageStore)) {
+          db.createObjectStore(imageStore, { keyPath: "id" });
+        }
+      };
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("Failed to open IndexedDB"));
+    });
+
+    return dbPromise;
+  }
+
+  function idbRequest(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("IndexedDB request failed"));
+    });
+  }
+
+  function txDone(tx) {
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("IndexedDB transaction failed"));
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB transaction aborted"));
+    });
+  }
+
+  async function dbGetAllTrades() {
+    const db = await openDb();
+    const tx = db.transaction(tradeStore, "readonly");
+    const store = tx.objectStore(tradeStore);
+    const rows = await idbRequest(store.getAll());
+    await txDone(tx);
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async function dbPutTrade(trade) {
+    const db = await openDb();
+    const tx = db.transaction(tradeStore, "readwrite");
+    tx.objectStore(tradeStore).put(trade);
+    await txDone(tx);
+  }
+
+  async function dbDeleteTrade(id) {
+    const db = await openDb();
+    const tx = db.transaction(tradeStore, "readwrite");
+    tx.objectStore(tradeStore).delete(id);
+    await txDone(tx);
+  }
+
+  async function dbSaveImage(blob) {
+    const db = await openDb();
+    const id = crypto.randomUUID();
+    const tx = db.transaction(imageStore, "readwrite");
+    tx.objectStore(imageStore).put({ id, blob, created_at: new Date().toISOString() });
+    await txDone(tx);
+    return id;
+  }
+
+  async function dbDeleteImage(id) {
+    if (!id) {
+      return;
+    }
+    const db = await openDb();
+    const tx = db.transaction(imageStore, "readwrite");
+    tx.objectStore(imageStore).delete(id);
+    await txDone(tx);
+  }
+
+  async function dbGetImage(id) {
+    if (!id) {
+      return null;
+    }
+    const db = await openDb();
+    const tx = db.transaction(imageStore, "readonly");
+    const record = await idbRequest(tx.objectStore(imageStore).get(id));
+    await txDone(tx);
+    return record?.blob || null;
+  }
+
+  async function dbGetImages(ids) {
+    const result = new Map();
+    const validIds = (Array.isArray(ids) ? ids : []).filter(Boolean);
+    if (!validIds.length) {
+      return result;
+    }
+
+    const db = await openDb();
+    const tx = db.transaction(imageStore, "readonly");
+    const store = tx.objectStore(imageStore);
+
+    await Promise.all(
+      validIds.map(async (id) => {
+        const record = await idbRequest(store.get(id));
+        if (record?.blob) {
+          result.set(id, record.blob);
+        }
+      })
+    );
+
+    await txDone(tx);
+    return result;
+  }
+
+  return {
+    openDb,
+    dbGetAllTrades,
+    dbPutTrade,
+    dbDeleteTrade,
+    dbSaveImage,
+    dbDeleteImage,
+    dbGetImage,
+    dbGetImages,
+  };
+}
+
+function parsePnl(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) {
+    return null;
+  }
+  const cleaned = raw.replace(/[$,\s]/g, "");
+  const value = Number(cleaned);
+  return Number.isFinite(value) ? value : NaN;
+}
+
+function getMissingEntryFields({ pair, direction, strategy, sessions }) {
+  const missing = [];
+  if (!pair) {
+    missing.push("Pair");
+  }
+  if (!direction) {
+    missing.push("Direction");
+  }
+  if (!strategy) {
+    missing.push("Strategy");
+  }
+  if (!sessions || sessions.length === 0) {
+    missing.push("Session");
+  }
+  return missing;
+}
+
+function toMillisDefault(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function sortTradesForDisplayWithOpenFirst(rows, toMillis = toMillisDefault) {
+  return [...rows].sort((a, b) => {
+    const statusA = a.status === "open" ? 0 : 1;
+    const statusB = b.status === "open" ? 0 : 1;
+    if (statusA !== statusB) {
+      return statusA - statusB;
+    }
+    return toMillis(b.captured_at_utc) - toMillis(a.captured_at_utc);
+  });
+}
+
+function chartOptions(numberYAxis = false) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        labels: {
+          color: "#5b4f8f",
+          font: { family: "DM Sans", size: 11 },
+        },
+      },
+      tooltip: {
+        backgroundColor: "rgba(41,31,96,0.94)",
+        titleColor: "#fff",
+        bodyColor: "#f7f4ff",
+        borderColor: "rgba(123,97,255,0.35)",
+        borderWidth: 1,
+      },
+    },
+    scales: {
+      x: {
+        ticks: { color: "#6f63a3", font: { family: "DM Sans", size: 10 } },
+        grid: { color: "rgba(110,83,208,0.12)" },
+      },
+      y: {
+        ticks: {
+          color: "#6f63a3",
+          font: { family: "DM Sans", size: 10 },
+          callback: numberYAxis
+            ? (value) => {
+                if (typeof value === "number") {
+                  return value.toFixed(2);
+                }
+                return value;
+              }
+            : undefined,
+        },
+        grid: { color: "rgba(110,83,208,0.12)" },
+      },
+    },
+  };
+}
+
+function createChartWithRegistry(id, config, chartRegistry) {
+  const canvas = document.getElementById(id);
+  if (!(canvas instanceof HTMLCanvasElement) || typeof Chart === "undefined") {
+    return;
+  }
+  const existing = chartRegistry.get(id);
+  if (existing) {
+    existing.destroy();
+  }
+  const chart = new Chart(canvas, config);
+  chartRegistry.set(id, chart);
+}
+
+class InsightOrbitCarousel {
+  constructor(root, slides, options = {}) {
+    this.root = root;
+    this.track = root.querySelector(".insight-orbit-track");
+    this.dotsWrap = root.querySelector(".orbit-dots");
+    this.prevBtn = root.querySelector(".orbit-prev");
+    this.nextBtn = root.querySelector(".orbit-next");
+    this.slidesData = slides || [];
+    this.index = Number.isInteger(options.startIndex) ? options.startIndex : 0;
+    this.autoplayMs = options.autoplayMs || 7600;
+    this.escape = typeof options.escapeHtml === "function" ? options.escapeHtml : (value) => String(value || "");
+    this.timer = null;
+    this.cleanupFns = [];
+    this.prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.touchStartX = 0;
+    this.touchStartY = 0;
+    this.touchTracking = false;
+
+    this.slides = [];
+    this.dots = [];
+
+    this.render();
+    this.bind();
+    this.update();
+    this.startAutoplay();
+  }
+
+  on(target, event, handler, options) {
+    if (!target) {
+      return;
+    }
+    target.addEventListener(event, handler, options);
+    this.cleanupFns.push(() => target.removeEventListener(event, handler, options));
+  }
+
+  render() {
+    if (!this.track || !this.dotsWrap) {
+      return;
+    }
+
+    this.track.innerHTML = "";
+    this.dotsWrap.innerHTML = "";
+    this.slides = this.slidesData.map((item) => {
+      const metricRows = Array.isArray(item.metrics) ? item.metrics.slice(0, 3) : [];
+      const metricHtml = metricRows.length
+        ? `
+          <div class="orbit-metrics">
+            ${metricRows
+              .map(
+                ([label, value]) => `
+              <div class="orbit-metric">
+                <div class="label">${this.escape(label || "-")}</div>
+                <div class="value">${this.escape(value || "-")}</div>
+              </div>`
+              )
+              .join("")}
+          </div>
+        `
+        : "";
+
+      const slide = document.createElement("article");
+      slide.className = "orbit-slide";
+      slide.innerHTML = `
+        <div class="orbit-kicker">${this.escape(item.kicker || "Insight Spotlight")}</div>
+        <div class="orbit-title">${this.escape(item.title || "Need More Data")}</div>
+        <div class="orbit-text">${this.escape(item.text || "Log more trades to unlock this insight.")}</div>
+        ${metricHtml}
+      `;
+      this.track.appendChild(slide);
+      return slide;
+    });
+
+    this.dots = this.slidesData.map((item, index) => {
+      const dot = document.createElement("button");
+      dot.type = "button";
+      dot.className = "orbit-dot";
+      dot.setAttribute("aria-label", `Go to insight ${index + 1}: ${item.title || "Insight"}`);
+      this.on(dot, "click", () => {
+        this.index = index;
+        this.update();
+        this.restartAutoplay();
+      });
+      this.dotsWrap.appendChild(dot);
+      return dot;
+    });
+  }
+
+  bind() {
+    this.on(this.prevBtn, "click", () => this.prev());
+    this.on(this.nextBtn, "click", () => this.next());
+
+    this.root.tabIndex = 0;
+    this.on(this.root, "keydown", (event) => {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        this.prev();
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        this.next();
+      }
+    });
+
+    this.on(this.root, "mouseenter", () => this.stopAutoplay());
+    this.on(this.root, "mouseleave", () => this.startAutoplay());
+    this.on(this.root, "focusin", () => this.stopAutoplay());
+    this.on(this.root, "focusout", () => this.startAutoplay());
+    this.on(window, "resize", () => this.update());
+
+    this.on(
+      this.root,
+      "touchstart",
+      (event) => {
+        if (!event.touches || event.touches.length !== 1) {
+          this.touchTracking = false;
+          return;
+        }
+        this.touchTracking = true;
+        this.touchStartX = event.touches[0].clientX;
+        this.touchStartY = event.touches[0].clientY;
+        this.stopAutoplay();
+      },
+      { passive: true }
+    );
+
+    this.on(
+      this.root,
+      "touchend",
+      (event) => {
+        if (!this.touchTracking || !event.changedTouches || !event.changedTouches.length) {
+          this.startAutoplay();
+          return;
+        }
+        const endX = event.changedTouches[0].clientX;
+        const endY = event.changedTouches[0].clientY;
+        const dx = endX - this.touchStartX;
+        const dy = endY - this.touchStartY;
+        const horizontalSwipe = Math.abs(dx) >= 46 && Math.abs(dx) > Math.abs(dy) * 1.15;
+        if (horizontalSwipe) {
+          if (dx < 0) {
+            this.next();
+          } else {
+            this.prev();
+          }
+        } else {
+          this.startAutoplay();
+        }
+        this.touchTracking = false;
+      },
+      { passive: true }
+    );
+
+    this.on(
+      this.root,
+      "touchcancel",
+      () => {
+        this.touchTracking = false;
+        this.startAutoplay();
+      },
+      { passive: true }
+    );
+  }
+
+  normalizeDiff(index) {
+    const total = this.slidesData.length;
+    let diff = index - this.index;
+    if (diff > total / 2) diff -= total;
+    if (diff < -total / 2) diff += total;
+    return diff;
+  }
+
+  classify(diff) {
+    if (diff === 0) return "is-center";
+    if (diff === -1) return "is-left";
+    if (diff === 1) return "is-right";
+    if (diff < 0) return "is-off-left";
+    return "is-off-right";
+  }
+
+  isCompactViewport() {
+    return this.root.clientWidth <= 680;
+  }
+
+  getScaleFactor() {
+    const width = this.root.clientWidth;
+    if (width <= 680) {
+      const compactRaw = width / 420;
+      return Math.max(0.82, Math.min(1, compactRaw));
+    }
+    const raw = width / 980;
+    return Math.max(0.56, Math.min(1.06, raw));
+  }
+
+  getPreset(diff, compact = false) {
+    if (compact) {
+      if (diff === 0) return { x: 0, z: 0, ry: 0, scale: 1, opacity: 1, zIndex: 5, filter: "none" };
+      if (diff === -1) return { x: -118, z: 0, ry: 0, scale: 0.9, opacity: 0.26, zIndex: 4, filter: "none" };
+      if (diff === 1) return { x: 118, z: 0, ry: 0, scale: 0.9, opacity: 0.26, zIndex: 4, filter: "none" };
+      if (diff < 0) return { x: -220, z: 0, ry: 0, scale: 0.84, opacity: 0, zIndex: 1, filter: "none" };
+      return { x: 220, z: 0, ry: 0, scale: 0.84, opacity: 0, zIndex: 1, filter: "none" };
+    }
+
+    if (diff === 0) return { x: 0, z: 165, ry: 0, scale: 1.03, opacity: 1, zIndex: 5, filter: "none" };
+    if (diff === -1) return { x: -324, z: -84, ry: 42, scale: 0.82, opacity: 0.88, zIndex: 4, filter: "saturate(0.78)" };
+    if (diff === 1) return { x: 324, z: -84, ry: -42, scale: 0.82, opacity: 0.88, zIndex: 4, filter: "saturate(0.78)" };
+    if (diff < 0) return { x: -610, z: -320, ry: 64, scale: 0.56, opacity: 0, zIndex: 1, filter: "blur(1.2px) saturate(0.6)" };
+    return { x: 610, z: -320, ry: -64, scale: 0.56, opacity: 0, zIndex: 1, filter: "blur(1.2px) saturate(0.6)" };
+  }
+
+  composeTransform(preset, scaleFactor) {
+    const x = preset.x * scaleFactor;
+    const z = preset.z * scaleFactor;
+    return `translate3d(calc(-50% + ${x}px), -50%, ${z}px) rotateY(${preset.ry}deg) scale(${preset.scale})`;
+  }
+
+  update() {
+    const compact = this.isCompactViewport();
+    this.root.classList.toggle("is-compact", compact);
+    const scaleFactor = this.getScaleFactor();
+    this.slides.forEach((slide, index) => {
+      const diff = this.normalizeDiff(index);
+      const cls = this.classify(diff);
+      const preset = this.getPreset(diff, compact);
+      slide.classList.remove("is-center", "is-left", "is-right", "is-off-left", "is-off-right");
+      slide.classList.add(cls);
+      slide.style.transform = this.composeTransform(preset, scaleFactor);
+      slide.style.opacity = String(preset.opacity);
+      slide.style.zIndex = String(preset.zIndex);
+      slide.style.filter = preset.filter;
+      slide.style.pointerEvents = cls === "is-center" ? "auto" : "none";
+    });
+
+    this.dots.forEach((dot, index) => {
+      dot.classList.toggle("is-active", index === this.index);
+    });
+  }
+
+  next() {
+    if (!this.slidesData.length) {
+      return;
+    }
+    this.index = (this.index + 1) % this.slidesData.length;
+    this.update();
+    this.restartAutoplay();
+  }
+
+  prev() {
+    if (!this.slidesData.length) {
+      return;
+    }
+    this.index = (this.index - 1 + this.slidesData.length) % this.slidesData.length;
+    this.update();
+    this.restartAutoplay();
+  }
+
+  startAutoplay() {
+    if (this.prefersReduced || this.slidesData.length < 2 || this.timer) {
+      return;
+    }
+    this.timer = window.setInterval(() => {
+      this.index = (this.index + 1) % this.slidesData.length;
+      this.update();
+    }, this.autoplayMs);
+  }
+
+  stopAutoplay() {
+    if (!this.timer) {
+      return;
+    }
+    window.clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  restartAutoplay() {
+    this.stopAutoplay();
+    this.startAutoplay();
+  }
+
+  destroy() {
+    this.stopAutoplay();
+    this.cleanupFns.forEach((cleanup) => cleanup());
+    this.cleanupFns = [];
+  }
+}
+
+function sortStrategiesByTradeCount(analytics, options = {}) {
+  const { includeZero = false } = options;
+  const rows = Object.entries(analytics?.strategyCounts || {});
+  const filtered = includeZero ? rows : rows.filter(([, count]) => Number(count) > 0);
+  return filtered.sort((left, right) => (Number(right[1]) || 0) - (Number(left[1]) || 0));
+}
+
+function formatStrategyMixLine(analytics, limit = 3) {
+  const ranked = sortStrategiesByTradeCount(analytics)
+    .slice(0, limit)
+    .map(([strategy, count]) => `${strategy} ${count}`);
+  return ranked.length ? ranked.join(" / ") : "No strategy data";
+}
+
+function formatStrategyNetLine(analytics, formatMoney, limit = 3) {
+  const ranked = sortStrategiesByTradeCount(analytics)
+    .slice(0, limit)
+    .map(([strategy]) => `${strategy} ${formatMoney(analytics?.strategyNetPnl?.[strategy] || 0)}`);
+  return ranked.length ? ranked.join(" | ") : "No strategy data";
+}
+
+function formatStrategyWinLine(analytics, limit = 3) {
+  const ranked = sortStrategiesByTradeCount(analytics)
+    .slice(0, limit)
+    .map(([strategy]) => `${strategy} ${(analytics?.strategyWinRate?.[strategy] || 0).toFixed(1)}%`);
+  return ranked.length ? ranked.join(" | ") : "No strategy data";
+}
+
+const form = document.getElementById("trade-form");
+const resetBtn = document.getElementById("reset-form");
+const saveBtn = document.getElementById("saveBtn");
+const errorEl = document.getElementById("form-error");
+const toastEl = document.getElementById("toast");
+const themeToggleEl = document.getElementById("themeToggle");
+
+const manualTimeToggleEl = document.getElementById("manualTimeToggle");
+const manualTimeFieldsEl = document.getElementById("manualTimeFields");
+const entryCapturedHintEl = document.getElementById("entryCapturedHint");
+
+const tradeDateEl = document.getElementById("tradeDate");
+const tradeTimeEl = document.getElementById("tradeTime");
+const pairEl = document.getElementById("pair");
+const directionEl = document.getElementById("direction");
+const lotSizeEl = document.getElementById("lotSize");
+const strategyEl = document.getElementById("strategy");
+const outcomeEl = document.getElementById("outcome");
+const pnlEl = document.getElementById("pnl");
+const noteEl = document.getElementById("note");
+const createConfluenceDetailsEl = document.getElementById("createConfluenceDetails");
+const confluenceChecklistEl = document.getElementById("confluenceChecklist");
+const confluenceSummaryEl = document.getElementById("confluenceSummary");
+
+const beforeZone = document.getElementById("beforeZone");
+const afterZone = document.getElementById("afterZone");
+const beforeFile = document.getElementById("beforeFile");
+const afterFile = document.getElementById("afterFile");
+const beforePreview = document.getElementById("beforePreview");
+const afterPreview = document.getElementById("afterPreview");
+const clearBeforeBtn = document.getElementById("clearBefore");
+const clearAfterBtn = document.getElementById("clearAfter");
+
+const analyticsCard = document.getElementById("analytics-card");
+const historyCard = document.getElementById("history-card");
+const analyticsTabsEl = document.getElementById("analyticsTabs");
+const analyticsPanelEl = document.getElementById("analyticsPanel");
+const topInsightPanelEl = document.getElementById("topInsightPanel");
+const spotlightCardEl = document.getElementById("spotlight-card");
+
+const filterPairEl = document.getElementById("filterPair");
+const filterSessionEl = document.getElementById("filterSession");
+const filterOutcomeEl = document.getElementById("filterOutcome");
+const filterStrategyEl = document.getElementById("filterStrategy");
+const filterIntegrityEl = document.getElementById("filterIntegrity");
+
+const settingShowInsightReelEl = document.getElementById("settingShowInsightReel");
+const settingStrategyModeEl = document.getElementById("settingStrategyMode");
+const settingsStrategyTabsEl = document.getElementById("settingsStrategyTabs");
+const settingsNewStrategyEl = document.getElementById("settingsNewStrategy");
+const settingsAddStrategyBtn = document.getElementById("settingsAddStrategy");
+const settingsRuleEditorEl = document.getElementById("settingsRuleEditor");
+const settingsSaveRulesBtn = document.getElementById("settingsSaveRules");
+const settingsResetRulesBtn = document.getElementById("settingsResetRules");
+
+const viewListBtn = document.getElementById("viewList");
+const viewGridBtn = document.getElementById("viewGrid");
+const exportAllBtn = document.getElementById("export-all");
+const exportFilteredBtn = document.getElementById("export-filtered");
+const historyGalleryEl = document.getElementById("historyGallery");
+
+const lotDecBtn = document.getElementById("lotDec");
+const lotIncBtn = document.getElementById("lotInc");
+const editLotDecBtn = document.getElementById("editLotDec");
+const editLotIncBtn = document.getElementById("editLotInc");
+
+const editModal = document.getElementById("edit-modal");
+const editForm = document.getElementById("edit-form");
+const editErrorEl = document.getElementById("edit-error");
+const modalCloseBtn = document.getElementById("modal-close");
+const deleteTradeBtn = document.getElementById("delete-trade");
+
+const editIdEl = document.getElementById("editId");
+const editManualTimeToggleEl = document.getElementById("editManualTimeToggle");
+const editManualTimeFieldsEl = document.getElementById("editManualTimeFields");
+const editDateEl = document.getElementById("editDate");
+const editTimeEl = document.getElementById("editTime");
+const editPairEl = document.getElementById("editPair");
+const editDirectionEl = document.getElementById("editDirection");
+const editLotSizeEl = document.getElementById("editLotSize");
+const editStrategyEl = document.getElementById("editStrategy");
+const editOutcomeEl = document.getElementById("editOutcome");
+const editPnlEl = document.getElementById("editPnl");
+const editNoteEl = document.getElementById("editNote");
+const editConfluenceDetailsEl = document.getElementById("editConfluenceDetails");
+const editConfluenceChecklistEl = document.getElementById("editConfluenceChecklist");
+const editConfluenceSummaryEl = document.getElementById("editConfluenceSummary");
+
+const editBeforeZone = document.getElementById("editBeforeZone");
+const editAfterZone = document.getElementById("editAfterZone");
+const editBeforeFile = document.getElementById("editBeforeFile");
+const editAfterFile = document.getElementById("editAfterFile");
+const editBeforePreview = document.getElementById("editBeforePreview");
+const editAfterPreview = document.getElementById("editAfterPreview");
+const editClearBeforeBtn = document.getElementById("editClearBefore");
+const editClearAfterBtn = document.getElementById("editClearAfter");
+
+const toast = createToastController(toastEl);
+const storage = createIdbStorage({
+  dbName: DB_NAME,
+  dbVersion: DB_VERSION,
+  tradeStore: TRADE_STORE,
+  imageStore: IMAGE_STORE,
+});
+const {
+  dbGetAllTrades,
+  dbPutTrade,
+  dbDeleteTrade,
+  dbSaveImage,
+  dbDeleteImage,
+  dbGetImage,
+  dbGetImages,
+} = storage;
+
+let trades = [];
+let historyViewMode = "grid";
+let activeAnalyticsTab = "performance";
+let openInlineEditorId = null;
+let entryManualTimeEnabled = false;
+let editManualTimeEnabled = false;
+let isRenderingHistory = false;
+let analyticsCarousel = null;
+let pairRegistry = [];
+let appSettings = createDefaultSettings();
+let settingsEditorStrategy = DEFAULT_STRATEGIES[0];
+let settingsRuleDraft = cloneConfluenceRules(CONFLUENCE_RULES);
+
+const chartRegistry = new Map();
+const createChart = (id, config) => createChartWithRegistry(id, config, chartRegistry);
+let historyObjectUrls = [];
+
+const createImages = {
+  beforeBlob: null,
+  afterBlob: null,
+};
+
+const editImages = {
+  beforeImageId: null,
+  afterImageId: null,
+  beforeNewBlob: null,
+  afterNewBlob: null,
+  beforeRemoved: false,
+  afterRemoved: false,
+};
+
+let createBeforeBinder;
+let createAfterBinder;
+let editBeforeBinder;
+let editAfterBinder;
+
+init().catch((error) => {
+  console.error(error);
+  showToast("App failed to initialize", "bad");
+});
+
+async function init() {
+  wipeLegacyTestData();
+  applyStoredTheme();
+  loadAppSettings();
+  applySettingsUi({ rerender: false });
+
+  bootstrapPairRegistry();
+  refreshPairSelectors();
+  refreshStrategySelectors();
+  fillTimeSuggestions();
+  applyDefaultDateTime();
+  applySavedDefaults();
+
+  analyticsCard.open = false;
+  historyCard.open = false;
+
+  bindDropZones();
+  bindEvents();
+
+  await loadTradesFromDb();
+  syncPairRegistryFromTrades(trades);
+  refreshPairSelectors();
+  renderAll();
+}
+
+function bindEvents() {
+  form.addEventListener("submit", handleCreateSubmit);
+  resetBtn.addEventListener("click", () => handleClear({ showToast: true }));
+  if (themeToggleEl) {
+    themeToggleEl.addEventListener("click", toggleTheme);
+  }
+
+  pairEl.addEventListener("change", () => {
+    handlePairSelectChange(pairEl);
+  });
+  editPairEl.addEventListener("change", () => {
+    handlePairSelectChange(editPairEl);
+  });
+  if (settingShowInsightReelEl) {
+    settingShowInsightReelEl.addEventListener("change", () => {
+      appSettings.showInsightReel = Boolean(settingShowInsightReelEl.checked);
+      saveAppSettings();
+      applyInsightReelVisibility();
+      renderTopInsightReel(trades);
+    });
+  }
+  if (settingStrategyModeEl) {
+    settingStrategyModeEl.addEventListener("change", () => {
+      const mode = normalizeStrategyMode(settingStrategyModeEl.value);
+      appSettings.strategyMode = mode;
+      saveAppSettings();
+      refreshStrategySelectors();
+      renderCreateConfluenceChecklist();
+      updateCreateConfluenceSummary();
+      renderAll();
+      showToast(`Strategy mode: ${appSettings.strategyMode === "all" ? "All" : appSettings.strategyMode}`, "ok");
+    });
+  }
+  if (settingsStrategyTabsEl) {
+    settingsStrategyTabsEl.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const button = target.closest("[data-settings-strategy]");
+      if (!button) {
+        return;
+      }
+      const strategy = button.getAttribute("data-settings-strategy");
+      if (!getDraftStrategies().includes(strategy)) {
+        return;
+      }
+      settingsEditorStrategy = strategy;
+      renderSettingsRuleTabs();
+      renderSettingsRuleEditor();
+    });
+  }
+  if (settingsAddStrategyBtn) {
+    settingsAddStrategyBtn.addEventListener("click", () => {
+      addStrategyFromSettings(settingsNewStrategyEl?.value);
+    });
+  }
+  if (settingsNewStrategyEl) {
+    settingsNewStrategyEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      addStrategyFromSettings(settingsNewStrategyEl.value);
+    });
+  }
+  if (settingsRuleEditorEl) {
+    settingsRuleEditorEl.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement)) {
+        return;
+      }
+      if (!target.matches("[data-rule-kind][data-rule-index]")) {
+        return;
+      }
+      const kind = target.dataset.ruleKind;
+      const index = Number(target.dataset.ruleIndex);
+      if ((kind !== "required" && kind !== "quality") || !Number.isInteger(index) || index < 0) {
+        return;
+      }
+      settingsRuleDraft[settingsEditorStrategy][kind][index] = target.value;
+    });
+
+    settingsRuleEditorEl.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+
+      const removeButton = target.closest("[data-remove-rule-kind]");
+      if (removeButton) {
+        const kind = removeButton.getAttribute("data-remove-rule-kind");
+        const index = Number(removeButton.getAttribute("data-remove-rule-index"));
+        if ((kind === "required" || kind === "quality") && Number.isInteger(index) && index >= 0) {
+          settingsRuleDraft[settingsEditorStrategy][kind].splice(index, 1);
+          renderSettingsRuleEditor();
+        }
+        return;
+      }
+
+      const addButton = target.closest("[data-add-rule-kind]");
+      if (!addButton) {
+        return;
+      }
+      const kind = addButton.getAttribute("data-add-rule-kind");
+      if (kind !== "required" && kind !== "quality") {
+        return;
+      }
+      const input = settingsRuleEditorEl.querySelector(`[data-add-rule-input="${kind}"]`);
+      const value = String(input?.value || "").trim();
+      if (!value) {
+        showToast("Enter a confluence label first", "bad");
+        return;
+      }
+      settingsRuleDraft[settingsEditorStrategy][kind].push(value);
+      input.value = "";
+      renderSettingsRuleEditor();
+    });
+  }
+  if (settingsSaveRulesBtn) {
+    settingsSaveRulesBtn.addEventListener("click", async () => {
+      await saveSettingsRules();
+    });
+  }
+  if (settingsResetRulesBtn) {
+    settingsResetRulesBtn.addEventListener("click", () => {
+      settingsRuleDraft = cloneConfluenceRules(CONFLUENCE_RULES);
+      const availableStrategies = getDraftStrategies();
+      settingsEditorStrategy = availableStrategies[0] || "";
+      renderSettingsRuleTabs();
+      renderSettingsRuleEditor();
+      showToast("Defaults loaded. Save rules to apply.", "ok");
+    });
+  }
+
+  manualTimeToggleEl.addEventListener("click", toggleEntryManualTime);
+  strategyEl.addEventListener("change", () => {
+    renderCreateConfluenceChecklist();
+    updateCreateConfluenceSummary();
+    if (strategyEl.value && createConfluenceDetailsEl && !createConfluenceDetailsEl.open) {
+      createConfluenceDetailsEl.open = true;
+    }
+  });
+  confluenceChecklistEl.addEventListener("change", updateCreateConfluenceSummary);
+
+  [filterPairEl, filterSessionEl, filterOutcomeEl, filterStrategyEl, filterIntegrityEl].forEach((el) => {
+    el.addEventListener("change", () => {
+      openInlineEditorId = null;
+      renderFilteredSections();
+    });
+  });
+
+  analyticsTabsEl.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const button = target.closest("[data-tab]");
+    if (!button) {
+      return;
+    }
+    const tab = button.getAttribute("data-tab");
+    if (!tab || !TAB_INSIGHTS[tab]) {
+      return;
+    }
+    activeAnalyticsTab = tab;
+    setAnalyticsActiveTab(tab);
+    renderAnalytics(getFilteredTrades());
+  });
+
+  viewListBtn.addEventListener("click", () => setHistoryView("list"));
+  viewGridBtn.addEventListener("click", () => setHistoryView("grid"));
+
+  lotDecBtn.addEventListener("click", () => adjustLot(lotSizeEl, -1));
+  lotIncBtn.addEventListener("click", () => adjustLot(lotSizeEl, 1));
+  editLotDecBtn.addEventListener("click", () => adjustLot(editLotSizeEl, -1));
+  editLotIncBtn.addEventListener("click", () => adjustLot(editLotSizeEl, 1));
+
+  lotSizeEl.addEventListener("change", () => normalizeLotStep(lotSizeEl));
+  editLotSizeEl.addEventListener("change", () => normalizeLotStep(editLotSizeEl));
+
+  exportAllBtn.addEventListener("click", () => exportCsv(trades, "lazy-but-data-v4-all.csv"));
+  exportFilteredBtn.addEventListener("click", () => exportCsv(getFilteredTrades(), "lazy-but-data-v4-filtered.csv"));
+
+  historyGalleryEl.addEventListener("click", onHistoryActionClick);
+
+  modalCloseBtn.addEventListener("click", closeEditModal);
+  editModal.addEventListener("click", (event) => {
+    if (event.target === editModal) {
+      closeEditModal();
+    }
+  });
+
+  editManualTimeToggleEl.addEventListener("click", toggleEditManualTime);
+  editStrategyEl.addEventListener("change", () => {
+    renderEditConfluenceChecklist();
+    updateEditConfluenceSummary();
+    if (editConfluenceDetailsEl && !editConfluenceDetailsEl.open) {
+      editConfluenceDetailsEl.open = true;
+    }
+  });
+  editConfluenceChecklistEl.addEventListener("change", updateEditConfluenceSummary);
+
+  editForm.addEventListener("submit", handleEditSubmit);
+}
+
+function wipeLegacyTestData() {
+  if (localStorage.getItem(LEGACY_WIPE_FLAG)) {
+    return;
+  }
+  localStorage.removeItem(LEGACY_STORAGE_KEY);
+  localStorage.setItem(LEGACY_WIPE_FLAG, "1");
+}
+
+function setAnalyticsActiveTab(tab) {
+  analyticsTabsEl.querySelectorAll(".analytics-tab").forEach((button) => {
+    button.classList.toggle("is-active", button.getAttribute("data-tab") === tab);
+  });
+}
+
+function bindDropZones() {
+  createBeforeBinder = wireDropZone(
+    beforeZone,
+    beforeFile,
+    beforePreview,
+    clearBeforeBtn,
+    (blob) => {
+      createImages.beforeBlob = blob;
+    },
+    () => {
+      createImages.beforeBlob = null;
+    }
+  );
+
+  createAfterBinder = wireDropZone(
+    afterZone,
+    afterFile,
+    afterPreview,
+    clearAfterBtn,
+    (blob) => {
+      createImages.afterBlob = blob;
+    },
+    () => {
+      createImages.afterBlob = null;
+    }
+  );
+
+  editBeforeBinder = wireDropZone(
+    editBeforeZone,
+    editBeforeFile,
+    editBeforePreview,
+    editClearBeforeBtn,
+    (blob) => {
+      editImages.beforeNewBlob = blob;
+      editImages.beforeRemoved = false;
+    },
+    () => {
+      editImages.beforeNewBlob = null;
+      editImages.beforeRemoved = true;
+      editImages.beforeImageId = null;
+    }
+  );
+
+  editAfterBinder = wireDropZone(
+    editAfterZone,
+    editAfterFile,
+    editAfterPreview,
+    editClearAfterBtn,
+    (blob) => {
+      editImages.afterNewBlob = blob;
+      editImages.afterRemoved = false;
+    },
+    () => {
+      editImages.afterNewBlob = null;
+      editImages.afterRemoved = true;
+      editImages.afterImageId = null;
+    }
+  );
+}
+
+function wireDropZone(zoneEl, fileEl, previewEl, clearBtnEl, onSet, onClear) {
+  let previewUrl = "";
+
+  function revokePreview() {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      previewUrl = "";
+    }
+  }
+
+  function showBlob(blob) {
+    revokePreview();
+    previewUrl = URL.createObjectURL(blob);
+    previewEl.src = previewUrl;
+    previewEl.style.display = "block";
+    clearBtnEl.style.display = "inline-flex";
+    zoneEl.style.display = "none";
+  }
+
+  function clearVisual() {
+    revokePreview();
+    previewEl.src = "";
+    previewEl.style.display = "none";
+    clearBtnEl.style.display = "none";
+    fileEl.value = "";
+    zoneEl.style.display = "";
+  }
+
+  async function processFile(file) {
+    if (!file || !file.type.startsWith("image/")) {
+      showToast("Only image files", "bad");
+      return;
+    }
+    const blob = await compressImage(file);
+    showBlob(blob);
+    onSet(blob);
+    showToast("Screenshot added", "ok");
+  }
+
+  zoneEl.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    zoneEl.classList.add("is-dragover");
+  });
+
+  zoneEl.addEventListener("dragleave", () => {
+    zoneEl.classList.remove("is-dragover");
+  });
+
+  zoneEl.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    zoneEl.classList.remove("is-dragover");
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) {
+      return;
+    }
+    await processFile(file);
+  });
+
+  zoneEl.addEventListener("paste", async (event) => {
+    const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith("image/"));
+    if (!item) {
+      return;
+    }
+    const file = item.getAsFile();
+    if (!file) {
+      return;
+    }
+    event.preventDefault();
+    await processFile(file);
+  });
+
+  fileEl.addEventListener("change", async () => {
+    const file = fileEl.files?.[0];
+    if (!file) {
+      return;
+    }
+    await processFile(file);
+  });
+
+  clearBtnEl.addEventListener("click", () => {
+    clearVisual();
+    onClear();
+    showToast("Screenshot removed", "ok");
+  });
+
+  return {
+    setPreviewBlob(blob) {
+      if (!blob) {
+        clearVisual();
+        return;
+      }
+      showBlob(blob);
+    },
+    clearSilent() {
+      clearVisual();
+    },
+    destroy() {
+      revokePreview();
+    },
+  };
+}
+
+async function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        const maxWidth = 720;
+        const scale = Math.min(1, maxWidth / image.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(image.width * scale);
+        canvas.height = Math.round(image.height * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("Canvas unavailable"));
+          return;
+        }
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error("Compression failed"));
+              return;
+            }
+            resolve(blob);
+          },
+          "image/jpeg",
+          0.6
+        );
+      };
+      image.onerror = reject;
+      image.src = String(reader.result);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function adjustLot(inputEl, direction) {
+  const current = Number(inputEl.value) || 0.001;
+  const next = Math.max(0.001, Number((current + direction * 0.001).toFixed(3)));
+  inputEl.value = next.toFixed(3);
+}
+
+function normalizeLotStep(inputEl) {
+  const value = Number(inputEl.value);
+  if (!Number.isFinite(value)) {
+    return;
+  }
+  inputEl.value = value.toFixed(3);
+}
+
+function normalizePairCode(raw) {
+  return String(raw || "")
+    .toUpperCase()
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function dedupePairs(values) {
+  const seen = new Set();
+  const out = [];
+  (values || []).forEach((value) => {
+    const pair = normalizePairCode(value);
+    if (!pair || seen.has(pair)) {
+      return;
+    }
+    seen.add(pair);
+    out.push(pair);
+  });
+  return out;
+}
+
+function loadPairRegistry() {
+  try {
+    const raw = localStorage.getItem(PAIR_REGISTRY_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function savePairRegistry() {
+  localStorage.setItem(PAIR_REGISTRY_KEY, JSON.stringify(pairRegistry));
+}
+
+function bootstrapPairRegistry() {
+  pairRegistry = dedupePairs([...PAIRS, ...loadPairRegistry()]);
+  savePairRegistry();
+}
+
+function syncPairRegistryFromTrades(rows) {
+  const merged = dedupePairs([...pairRegistry, ...(rows || []).map((trade) => trade?.pair || "")]);
+  const changed = merged.length !== pairRegistry.length || merged.some((pair, index) => pair !== pairRegistry[index]);
+  if (!changed) {
+    return;
+  }
+  pairRegistry = merged;
+  savePairRegistry();
+}
+
+function getPairUniverse(extraRows) {
+  return dedupePairs([...pairRegistry, ...(extraRows || []).map((trade) => trade?.pair || "")]);
+}
+
+function isAddPairOptionValue(value) {
+  return value === ADD_PAIR_OPTION_VALUE;
+}
+
+function normalizedSelectedPair(value) {
+  const raw = String(value || "").trim();
+  if (!raw || isAddPairOptionValue(raw)) {
+    return "";
+  }
+  return normalizePairCode(raw);
+}
+
+function fillPairOptions(selectEl, includeBlank, selectedValue = "", options = {}) {
+  const { includeAddAction = true } = options;
+  const nextSelected = normalizedSelectedPair(selectedValue || selectEl.value);
+  const pairs = getPairUniverse();
+
+  selectEl.innerHTML = "";
+  if (includeBlank) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "-";
+    selectEl.appendChild(option);
+  }
+
+  pairs.forEach((pair) => {
+    const option = document.createElement("option");
+    option.value = pair;
+    option.textContent = pair;
+    selectEl.appendChild(option);
+  });
+
+  if (includeAddAction) {
+    const option = document.createElement("option");
+    option.value = ADD_PAIR_OPTION_VALUE;
+    option.textContent = "+ Add pair...";
+    selectEl.appendChild(option);
+  }
+
+  let applied = "";
+  if (nextSelected && pairs.includes(nextSelected)) {
+    applied = nextSelected;
+  } else if (!includeBlank && pairs.length) {
+    applied = pairs[0];
+  }
+  selectEl.value = applied;
+  selectEl.dataset.prevPair = applied;
+}
+
+function fillPairFilter(selectedValue = "") {
+  const nextSelected = normalizedSelectedPair(selectedValue || filterPairEl.value);
+  const pairs = getPairUniverse();
+
+  filterPairEl.innerHTML = '<option value="">All Pairs</option>';
+  pairs.forEach((pair) => {
+    const option = document.createElement("option");
+    option.value = pair;
+    option.textContent = pair;
+    filterPairEl.appendChild(option);
+  });
+
+  if (nextSelected && pairs.includes(nextSelected)) {
+    filterPairEl.value = nextSelected;
+  }
+}
+
+function refreshPairSelectors() {
+  fillPairOptions(pairEl, true, pairEl.value, { includeAddAction: true });
+  fillPairOptions(editPairEl, true, editPairEl.value, { includeAddAction: true });
+  fillPairFilter(filterPairEl.value);
+}
+
+function registerPair(rawPair) {
+  const pair = normalizePairCode(rawPair);
+  if (!pair) {
+    return { ok: false, reason: "Enter a pair code first." };
+  }
+  if (pair.length < 3) {
+    return { ok: false, reason: "Pair code must be at least 3 characters." };
+  }
+  if (pair.length > 12) {
+    return { ok: false, reason: "Pair code is too long." };
+  }
+
+  const existing = pairRegistry.includes(pair);
+  if (!existing) {
+    pairRegistry.push(pair);
+    savePairRegistry();
+    refreshPairSelectors();
+  }
+  return { ok: true, pair, isNew: !existing };
+}
+
+function promptAddPair() {
+  const raw = window.prompt("Add pair code (3-12 chars), e.g. AUDUSD or US30:");
+  if (raw == null) {
+    return null;
+  }
+  const result = registerPair(raw);
+  if (!result.ok) {
+    showToast(result.reason, "bad");
+    return;
+  }
+  showToast(result.isNew ? `Pair ${result.pair} added` : `Pair ${result.pair} already available`, "ok");
+  return result.pair;
+}
+
+function handlePairSelectChange(selectEl) {
+  if (!selectEl) {
+    return;
+  }
+  if (!isAddPairOptionValue(selectEl.value)) {
+    selectEl.dataset.prevPair = normalizedSelectedPair(selectEl.value);
+    return;
+  }
+
+  const previous = normalizedSelectedPair(selectEl.dataset.prevPair || "");
+  const addedPair = promptAddPair();
+  if (!addedPair) {
+    selectEl.value = previous || "";
+    return;
+  }
+
+  if (selectEl.classList.contains("inline-pair")) {
+    selectEl.innerHTML = pairOptionsHtml(addedPair, true, true);
+  } else {
+    refreshPairSelectors();
+  }
+  selectEl.value = addedPair;
+  selectEl.dataset.prevPair = addedPair;
+}
+
+function fillTimeSuggestions() {
+  const list = document.getElementById("time-suggestions");
+  const options = [];
+  for (let hour = 0; hour < 24; hour += 1) {
+    for (let minute = 0; minute < 60; minute += 15) {
+      options.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`);
+    }
+  }
+  list.innerHTML = options.map((value) => `<option value="${value}"></option>`).join("");
+}
+
+function toggleEntryManualTime() {
+  entryManualTimeEnabled = !entryManualTimeEnabled;
+  manualTimeFieldsEl.style.display = entryManualTimeEnabled ? "grid" : "none";
+  manualTimeToggleEl.textContent = entryManualTimeEnabled ? "Use Device Time" : "Set Time Manually";
+  entryCapturedHintEl.textContent = entryManualTimeEnabled
+    ? "Timestamp: manual override enabled"
+    : "Timestamp: device time (auto)";
+  if (entryManualTimeEnabled && !tradeDateEl.value) {
+    applyDefaultDateTime();
+  }
+}
+
+function toggleEditManualTime() {
+  editManualTimeEnabled = !editManualTimeEnabled;
+  editManualTimeFieldsEl.style.display = editManualTimeEnabled ? "grid" : "none";
+  editManualTimeToggleEl.textContent = editManualTimeEnabled ? "Use Existing Time" : "Set Time Manually";
+}
+
+function applyDefaultDateTime() {
+  const now = new Date();
+  tradeDateEl.value = toDateInputValue(now);
+  tradeTimeEl.value = toTimeInputValue(now);
+}
+
+function applySavedDefaults() {
+  const defaults = loadDefaults();
+  if (!defaults) {
+    return;
+  }
+  if (defaults.pair) {
+    registerPair(defaults.pair);
+    pairEl.value = normalizePairCode(defaults.pair);
+    pairEl.dataset.prevPair = normalizePairCode(defaults.pair);
+  }
+  if (defaults.direction) {
+    directionEl.value = defaults.direction;
+  }
+  if (defaults.lotSize) {
+    lotSizeEl.value = defaults.lotSize;
+  }
+  if (defaults.strategy && getAllowedStrategies().includes(defaults.strategy)) {
+    strategyEl.value = defaults.strategy;
+  } else if (getAllowedStrategies().length === 1) {
+    strategyEl.value = getAllowedStrategies()[0];
+  }
+  renderCreateConfluenceChecklist();
+  updateCreateConfluenceSummary();
+  if (createConfluenceDetailsEl) {
+    createConfluenceDetailsEl.open = false;
+  }
+}
+
+function getStoredTheme() {
+  const raw = localStorage.getItem(THEME_KEY);
+  return raw === "dark" ? "dark" : "light";
+}
+
+function applyStoredTheme() {
+  setTheme(getStoredTheme(), { persist: false });
+}
+
+function setTheme(theme, options = {}) {
+  const { persist = true } = options;
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = nextTheme;
+
+  if (themeToggleEl) {
+    const isDark = nextTheme === "dark";
+    themeToggleEl.classList.toggle("is-dark", isDark);
+    themeToggleEl.setAttribute("aria-pressed", String(isDark));
+    themeToggleEl.setAttribute("aria-label", isDark ? "Switch to light mode" : "Switch to dark mode");
+  }
+
+  if (persist) {
+    localStorage.setItem(THEME_KEY, nextTheme);
+  }
+}
+
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  setTheme(current === "dark" ? "light" : "dark");
+}
+
+function handleClear(options = {}) {
+  const { showToast: shouldShowToast = false } = options;
+
+  form.reset();
+  applyDefaultDateTime();
+  applySavedDefaults();
+
+  if (entryManualTimeEnabled) {
+    toggleEntryManualTime();
+  }
+
+  createImages.beforeBlob = null;
+  createImages.afterBlob = null;
+  createBeforeBinder.clearSilent();
+  createAfterBinder.clearSilent();
+
+  renderCreateConfluenceChecklist();
+  updateCreateConfluenceSummary();
+
+  errorEl.textContent = "";
+  if (shouldShowToast) {
+    showToast("Form cleared", "ok");
+  }
+}
+
+function saveDefaults(defaults) {
+  localStorage.setItem(DEFAULTS_KEY, JSON.stringify(defaults));
+}
+
+function loadDefaults() {
+  try {
+    const raw = localStorage.getItem(DEFAULTS_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function createDefaultSettings() {
+  return {
+    showInsightReel: true,
+    strategyMode: "all",
+    confluenceRules: cloneConfluenceRules(CONFLUENCE_RULES),
+  };
+}
+
+function normalizeStrategyName(value) {
+  const normalized = String(value || "").trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+  return normalized.slice(0, 24);
+}
+
+function orderStrategies(list) {
+  const unique = [];
+  const seen = new Set();
+
+  (Array.isArray(list) ? list : []).forEach((item) => {
+    const strategy = normalizeStrategyName(item);
+    if (!strategy) {
+      return;
+    }
+    const key = strategy.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    unique.push(strategy);
+  });
+
+  const coreSet = new Set(DEFAULT_STRATEGIES.map((item) => item.toLowerCase()));
+  const coreOrdered = DEFAULT_STRATEGIES.filter((strategy) =>
+    unique.some((item) => item.toLowerCase() === strategy.toLowerCase())
+  );
+  const customOrdered = unique
+    .filter((strategy) => !coreSet.has(strategy.toLowerCase()))
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+
+  return [...coreOrdered, ...customOrdered];
+}
+
+function mapRulesByStrategy(rules) {
+  const out = {};
+  Object.entries(rules && typeof rules === "object" ? rules : {}).forEach(([rawStrategy, source]) => {
+    const strategy = normalizeStrategyName(rawStrategy);
+    if (!strategy || out[strategy]) {
+      return;
+    }
+    out[strategy] = source && typeof source === "object" ? source : {};
+  });
+  return out;
+}
+
+function getStrategyUniverse(options = {}) {
+  const {
+    rulesMap = appSettings?.confluenceRules || CONFLUENCE_RULES,
+    rows = trades,
+    includeTradeStrategies = true,
+  } = options;
+
+  const candidates = [...DEFAULT_STRATEGIES];
+  Object.keys(rulesMap && typeof rulesMap === "object" ? rulesMap : {}).forEach((strategy) => {
+    candidates.push(strategy);
+  });
+
+  if (includeTradeStrategies && Array.isArray(rows)) {
+    rows.forEach((trade) => {
+      candidates.push(trade?.strategy);
+    });
+  }
+
+  const ordered = orderStrategies(candidates);
+  return ordered.length ? ordered : [...DEFAULT_STRATEGIES];
+}
+
+function getConfiguredStrategies() {
+  return getStrategyUniverse({ includeTradeStrategies: false });
+}
+
+function getDraftStrategies() {
+  return getStrategyUniverse({
+    rulesMap: settingsRuleDraft,
+    rows: [],
+    includeTradeStrategies: false,
+  });
+}
+
+function normalizeStrategyMode(value, options = {}) {
+  const { strategies = getConfiguredStrategies() } = options;
+  const raw = String(value || "").trim();
+  if (!raw || raw.toLowerCase() === "all" || raw.toLowerCase() === "both") {
+    return "all";
+  }
+  const normalized = normalizeStrategyName(raw);
+  if (!normalized) {
+    return "all";
+  }
+  return strategies.includes(normalized) ? normalized : "all";
+}
+
+function cloneConfluenceRules(rules) {
+  const sourceMap = mapRulesByStrategy(rules);
+  const strategies = getStrategyUniverse({
+    rulesMap: sourceMap,
+    rows: [],
+    includeTradeStrategies: false,
+  });
+  const out = {};
+  strategies.forEach((strategy) => {
+    const source = sourceMap[strategy] || {};
+    out[strategy] = {
+      required: Array.isArray(source.required) ? [...source.required] : [],
+      quality: Array.isArray(source.quality) ? [...source.quality] : [],
+    };
+  });
+  return out;
+}
+
+function normalizeConfluenceLabels(list) {
+  const seen = new Set();
+  const out = [];
+  (Array.isArray(list) ? list : []).forEach((item) => {
+    const label = String(item || "").trim();
+    if (!label) {
+      return;
+    }
+    const key = label.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    out.push(label.slice(0, 120));
+  });
+  return out;
+}
+
+function normalizeConfluenceRulesMap(rawRules) {
+  const defaults = mapRulesByStrategy(CONFLUENCE_RULES);
+  const sourceMap = mapRulesByStrategy(rawRules);
+  const strategies = orderStrategies([...Object.keys(defaults), ...Object.keys(sourceMap)]);
+  const out = {};
+
+  strategies.forEach((strategy) => {
+    const source = sourceMap[strategy] || defaults[strategy] || {};
+    const required = normalizeConfluenceLabels(source.required);
+    const qualityRaw = normalizeConfluenceLabels(source.quality);
+    const requiredSet = new Set(required.map((item) => item.toLowerCase()));
+    const quality = qualityRaw.filter((item) => !requiredSet.has(item.toLowerCase()));
+    out[strategy] = { required, quality };
+  });
+
+  return out;
+}
+
+function normalizeSettings(rawSettings) {
+  const defaults = createDefaultSettings();
+  if (!rawSettings || typeof rawSettings !== "object") {
+    return defaults;
+  }
+
+  const confluenceRules = normalizeConfluenceRulesMap(rawSettings.confluenceRules);
+  const strategyMode = normalizeStrategyMode(rawSettings.strategyMode, {
+    strategies: Object.keys(confluenceRules),
+  });
+
+  return {
+    showInsightReel: rawSettings.showInsightReel !== false,
+    strategyMode,
+    confluenceRules,
+  };
+}
+
+function loadAppSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    appSettings = normalizeSettings(raw ? JSON.parse(raw) : null);
+  } catch (_error) {
+    appSettings = createDefaultSettings();
+  }
+  settingsRuleDraft = cloneConfluenceRules(appSettings.confluenceRules);
+  const availableStrategies = getDraftStrategies();
+  settingsEditorStrategy = availableStrategies.includes(settingsEditorStrategy)
+    ? settingsEditorStrategy
+    : (availableStrategies[0] || "");
+  renderSettingsPanel();
+}
+
+function saveAppSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(appSettings));
+}
+
+function applySettingsUi(options = {}) {
+  const { rerender = true } = options;
+  applyInsightReelVisibility();
+  refreshStrategySelectors();
+  renderSettingsPanel();
+
+  if (!rerender) {
+    return;
+  }
+
+  renderCreateConfluenceChecklist();
+  updateCreateConfluenceSummary();
+  renderAll();
+}
+
+function applyInsightReelVisibility() {
+  if (!spotlightCardEl) {
+    return;
+  }
+  spotlightCardEl.style.display = appSettings.showInsightReel ? "" : "none";
+}
+
+function isSingleStrategyMode() {
+  const strategies = getConfiguredStrategies();
+  return appSettings.strategyMode !== "all" && strategies.includes(appSettings.strategyMode);
+}
+
+function getAllowedStrategies() {
+  const strategies = getConfiguredStrategies();
+  if (!strategies.length) {
+    return [];
+  }
+  return isSingleStrategyMode() ? [appSettings.strategyMode] : strategies;
+}
+
+function getStrategyOptionsForEdit(selectedValue) {
+  const selected = normalizeStrategyName(selectedValue);
+  const allowed = getAllowedStrategies();
+  if (selected && !allowed.includes(selected)) {
+    return [selected, ...allowed];
+  }
+  return allowed;
+}
+
+function fillStrategyOptions(selectEl, includeBlank, selectedValue = "", options = {}) {
+  if (!selectEl) {
+    return;
+  }
+  const { includeLegacy = false } = options;
+  const selected = normalizeStrategyName(selectedValue);
+  const values = includeLegacy ? getStrategyOptionsForEdit(selected) : getAllowedStrategies();
+
+  selectEl.innerHTML = "";
+  const shouldIncludeBlank = includeBlank && values.length > 1;
+  if (shouldIncludeBlank) {
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "-";
+    selectEl.appendChild(blank);
+  }
+
+  values.forEach((strategy) => {
+    const option = document.createElement("option");
+    option.value = strategy;
+    option.textContent = includeLegacy && !getAllowedStrategies().includes(strategy) ? `${strategy} (legacy)` : strategy;
+    selectEl.appendChild(option);
+  });
+
+  if (selected && values.includes(selected)) {
+    selectEl.value = selected;
+  } else if (values.length === 1) {
+    selectEl.value = values[0];
+  } else {
+    selectEl.value = shouldIncludeBlank ? "" : values[0] || "";
+  }
+
+  if (includeLegacy) {
+    selectEl.disabled = false;
+  } else {
+    selectEl.disabled = isSingleStrategyMode();
+  }
+}
+
+function fillStrategyFilter(selectedValue = "") {
+  const selected = normalizeStrategyName(selectedValue);
+  const values = getStrategyUniverse();
+  filterStrategyEl.innerHTML = '<option value="">All Strategies</option>';
+  values.forEach((strategy) => {
+    const option = document.createElement("option");
+    option.value = strategy;
+    option.textContent = strategy;
+    filterStrategyEl.appendChild(option);
+  });
+  if (selected) {
+    filterStrategyEl.value = selected;
+  }
+}
+
+function refreshStrategySelectors() {
+  fillStrategyOptions(strategyEl, true, strategyEl.value, { includeLegacy: false });
+  fillStrategyOptions(editStrategyEl, true, editStrategyEl.value, { includeLegacy: true });
+  if (isSingleStrategyMode() && getAllowedStrategies().includes(editStrategyEl.value) && getStrategyOptionsForEdit(editStrategyEl.value).length === 1) {
+    editStrategyEl.disabled = true;
+  }
+  fillStrategyFilter(filterStrategyEl.value);
+}
+
+function renderStrategyModeOptions() {
+  if (!settingStrategyModeEl) {
+    return;
+  }
+  const strategies = getConfiguredStrategies();
+  const options = [
+    { value: "all", label: "All strategies" },
+    ...strategies.map((strategy) => ({ value: strategy, label: `${strategy} only` })),
+  ];
+
+  settingStrategyModeEl.innerHTML = "";
+  options.forEach((entry) => {
+    const option = document.createElement("option");
+    option.value = entry.value;
+    option.textContent = entry.label;
+    settingStrategyModeEl.appendChild(option);
+  });
+
+  const normalizedMode = normalizeStrategyMode(appSettings.strategyMode, { strategies });
+  appSettings.strategyMode = normalizedMode;
+  settingStrategyModeEl.value = normalizedMode;
+}
+
+function renderSettingsPanel() {
+  if (settingShowInsightReelEl) {
+    settingShowInsightReelEl.checked = Boolean(appSettings.showInsightReel);
+  }
+  renderStrategyModeOptions();
+  renderSettingsRuleTabs();
+  renderSettingsRuleEditor();
+}
+
+function renderSettingsRuleTabs() {
+  if (!settingsStrategyTabsEl) {
+    return;
+  }
+  const strategies = getDraftStrategies();
+  if (!strategies.length) {
+    settingsStrategyTabsEl.innerHTML = "";
+    settingsEditorStrategy = "";
+    return;
+  }
+  if (!strategies.includes(settingsEditorStrategy)) {
+    settingsEditorStrategy = strategies[0];
+  }
+
+  settingsStrategyTabsEl.innerHTML = strategies
+    .map((strategy) => {
+      const isActive = strategy === settingsEditorStrategy;
+      return `<button class="analytics-tab${isActive ? " is-active" : ""}" data-settings-strategy="${escapeHtmlAttr(strategy)}" type="button">${escapeHtml(strategy)}</button>`;
+    })
+    .join("");
+}
+
+function addStrategyFromSettings(rawName) {
+  const strategy = normalizeStrategyName(rawName);
+  if (!strategy) {
+    showToast("Enter a strategy name first", "bad");
+    return;
+  }
+
+  const existing = getDraftStrategies();
+  const exists = existing.some((item) => item.toLowerCase() === strategy.toLowerCase());
+  if (exists) {
+    showToast(`${strategy} already exists`, "bad");
+    return;
+  }
+
+  settingsRuleDraft[strategy] = { required: [], quality: [] };
+  settingsEditorStrategy = strategy;
+  if (settingsNewStrategyEl) {
+    settingsNewStrategyEl.value = "";
+  }
+  renderSettingsRuleTabs();
+  renderSettingsRuleEditor();
+  showToast(`Added ${strategy}. Add confluences, then save rules.`, "ok");
+}
+
+function renderSettingsRuleEditor() {
+  if (!settingsRuleEditorEl) {
+    return;
+  }
+  const rules = settingsRuleDraft?.[settingsEditorStrategy] || { required: [], quality: [] };
+
+  const renderRuleList = (kind) => {
+    const items = rules[kind] || [];
+    const rows = items
+      .map(
+        (item, index) => `
+          <div class="settings-rule-row">
+            <textarea
+              class="settings-rule-text"
+              data-rule-kind="${kind}"
+              data-rule-index="${index}"
+              maxlength="120"
+              rows="2"
+            >${escapeHtml(item)}</textarea>
+            <button
+              type="button"
+              class="settings-rule-remove"
+              data-remove-rule-kind="${kind}"
+              data-remove-rule-index="${index}"
+              aria-label="Remove confluence"
+              title="Remove confluence"
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+        `
+      )
+      .join("");
+
+    return rows || '<div class="muted-empty">No confluences added yet.</div>';
+  };
+
+  settingsRuleEditorEl.innerHTML = `
+    <div class="settings-rule-columns">
+      <section class="settings-rule-column">
+        <div class="confluence-label">Required</div>
+        <div class="settings-rule-list">${renderRuleList("required")}</div>
+        <div class="settings-rule-add">
+          <input type="text" placeholder="Add required confluence" data-add-rule-input="required" maxlength="120" />
+          <button type="button" class="btn btn-ghost btn-tiny" data-add-rule-kind="required">Add</button>
+        </div>
+      </section>
+      <section class="settings-rule-column">
+        <div class="confluence-label">Quality</div>
+        <div class="settings-rule-list">${renderRuleList("quality")}</div>
+        <div class="settings-rule-add">
+          <input type="text" placeholder="Add quality confluence" data-add-rule-input="quality" maxlength="120" />
+          <button type="button" class="btn btn-ghost btn-tiny" data-add-rule-kind="quality">Add</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+async function saveSettingsRules() {
+  if (settingsSaveRulesBtn) {
+    settingsSaveRulesBtn.disabled = true;
+  }
+  try {
+    const normalized = normalizeConfluenceRulesMap(settingsRuleDraft);
+    const configured = Object.keys(normalized);
+    const missingRequired = configured.find((strategy) => !(normalized[strategy]?.required || []).length);
+    if (missingRequired) {
+      showToast(`${missingRequired}: add at least one required confluence`, "bad");
+      return;
+    }
+
+    appSettings.confluenceRules = normalized;
+    appSettings.strategyMode = normalizeStrategyMode(appSettings.strategyMode, { strategies: configured });
+    settingsRuleDraft = cloneConfluenceRules(normalized);
+    saveAppSettings();
+
+    refreshStrategySelectors();
+    renderSettingsPanel();
+    const updatedCount = await recomputeTradesForCurrentRules();
+    renderCreateConfluenceChecklist();
+    updateCreateConfluenceSummary();
+    renderEditConfluenceChecklist();
+    updateEditConfluenceSummary();
+    renderAll();
+
+    showToast(`Confluence rules saved (${updatedCount} trades refreshed)`, "ok");
+  } finally {
+    if (settingsSaveRulesBtn) {
+      settingsSaveRulesBtn.disabled = false;
+    }
+  }
+}
+
+async function recomputeTradesForCurrentRules() {
+  let updatedCount = 0;
+  for (let index = 0; index < trades.length; index += 1) {
+    const trade = trades[index];
+    const inferred = inferConfluence(trade.strategy, trade.present_confluences || []);
+    const next = {
+      ...trade,
+      confluence_score: inferred.confluence_score,
+      total_confluences: inferred.total_confluences,
+      missing_confluences: inferred.missing_confluences,
+      required_missing_count: inferred.required_missing_count,
+      quality_missing_count: inferred.quality_missing_count,
+      setup_integrity: inferred.setup_integrity,
+      setup_grade: inferred.setup_grade,
+      updated_at: new Date().toISOString(),
+    };
+
+    const changed =
+      trade.confluence_score !== next.confluence_score ||
+      Number(trade.total_confluences) !== Number(next.total_confluences) ||
+      !sameStringArray(trade.missing_confluences, next.missing_confluences) ||
+      Number(trade.required_missing_count) !== Number(next.required_missing_count) ||
+      Number(trade.quality_missing_count) !== Number(next.quality_missing_count) ||
+      trade.setup_integrity !== next.setup_integrity ||
+      trade.setup_grade !== next.setup_grade;
+
+    if (!changed) {
+      continue;
+    }
+
+    trades[index] = next;
+    await dbPutTrade(next);
+    updatedCount += 1;
+  }
+  return updatedCount;
+}
+
+function sameStringArray(left, right) {
+  const a = Array.isArray(left) ? left : [];
+  const b = Array.isArray(right) ? right : [];
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let index = 0; index < a.length; index += 1) {
+    if (String(a[index]) !== String(b[index])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getCheckedValues(root, name) {
+  return [...root.querySelectorAll(`input[name="${name}"]:checked`)].map((el) => el.value);
+}
+
+function getConfluenceRules(strategy) {
+  const map = appSettings?.confluenceRules || CONFLUENCE_RULES;
+  const normalized = normalizeStrategyName(strategy);
+  if (map[normalized]) {
+    return map[normalized];
+  }
+  const fallbackKey = Object.keys(map).find((item) => item.toLowerCase() === normalized.toLowerCase());
+  return (fallbackKey && map[fallbackKey]) || { required: [], quality: [] };
+}
+
+function inferConfluence(strategy, presentConfluences) {
+  const rules = getConfluenceRules(strategy);
+  const all = [...rules.required, ...rules.quality];
+  const presentSet = new Set(presentConfluences || []);
+  const missing = all.filter((item) => !presentSet.has(item));
+  const requiredMissing = rules.required.filter((item) => !presentSet.has(item));
+  const qualityMissing = rules.quality.filter((item) => !presentSet.has(item));
+
+  let setupIntegrity = "hard_invalidation_present";
+  if (!strategy || !all.length) {
+    setupIntegrity = "hard_invalidation_present";
+  } else if (requiredMissing.length > 0) {
+    setupIntegrity = "hard_invalidation_present";
+  } else if (qualityMissing.length === 0) {
+    setupIntegrity = "full_confluence";
+  } else if (qualityMissing.length === 1) {
+    setupIntegrity = "one_soft_confluence_missing";
+  } else {
+    setupIntegrity = "multiple_soft_confluences_missing";
+  }
+
+  const gradeMap = {
+    full_confluence: "A",
+    one_soft_confluence_missing: "B",
+    multiple_soft_confluences_missing: "C",
+    hard_invalidation_present: "F",
+  };
+
+  return {
+    confluence_score: `${all.length - missing.length}/${all.length}`,
+    total_confluences: all.length,
+    missing_confluences: missing,
+    required_missing_count: requiredMissing.length,
+    quality_missing_count: qualityMissing.length,
+    setup_integrity: setupIntegrity,
+    setup_grade: gradeMap[setupIntegrity] || "F",
+  };
+}
+
+function buildConfluenceChecklistHtml(strategy, inputName, selectedValues) {
+  const selected = new Set(selectedValues || []);
+  const rules = getConfluenceRules(strategy);
+  if (!rules.required.length && !rules.quality.length) {
+    return `<div class="muted-empty">Select strategy to load checklist.</div>`;
+  }
+
+  const renderItems = (items) =>
+    items
+      .map((item, index) => {
+        const checked = selected.has(item) ? "checked" : "";
+        const id = `${inputName}-${slugify(item)}-${index}`;
+        return `<label class="confluence-item" for="${id}">
+          <input id="${id}" name="${inputName}" type="checkbox" value="${escapeHtmlAttr(item)}" ${checked} />
+          <span>${escapeHtml(item)}</span>
+        </label>`;
+      })
+      .join("");
+
+  return `
+    <section class="confluence-block">
+      <div class="confluence-label">Required</div>
+      <div class="confluence-list">${renderItems(rules.required)}</div>
+    </section>
+    <section class="confluence-block">
+      <div class="confluence-label">Quality</div>
+      <div class="confluence-list">${renderItems(rules.quality)}</div>
+    </section>
+  `;
+}
+
+function renderConfluenceSummary(summaryEl, strategy, presentConfluences) {
+  if (!strategy) {
+    summaryEl.textContent = "Select strategy to load checklist.";
+    summaryEl.className = "confluence-summary muted-empty";
+    return;
+  }
+
+  const inferred = inferConfluence(strategy, presentConfluences);
+  const missing = inferred.missing_confluences.length ? inferred.missing_confluences.join(", ") : "None";
+
+  summaryEl.className = "confluence-summary";
+  summaryEl.innerHTML = `
+    <div><strong>Confluence score:</strong> ${escapeHtml(inferred.confluence_score)}</div>
+    <div><strong>Missing:</strong> ${escapeHtml(missing)}</div>
+    <div><strong>Integrity:</strong> ${escapeHtml(integrityLabel(inferred.setup_integrity))}</div>
+    <div><strong>Grade:</strong> ${escapeHtml(inferred.setup_grade)}</div>
+  `;
+}
+
+function renderCreateConfluenceChecklist() {
+  const strategy = strategyEl.value;
+  const selected = getCheckedValues(form, "createConfluence");
+  confluenceChecklistEl.innerHTML = buildConfluenceChecklistHtml(strategy, "createConfluence", selected);
+}
+
+function updateCreateConfluenceSummary() {
+  renderConfluenceSummary(confluenceSummaryEl, strategyEl.value, getCheckedValues(form, "createConfluence"));
+}
+
+function renderEditConfluenceChecklist(selectedValues) {
+  const strategy = editStrategyEl.value;
+  const selected = selectedValues || getCheckedValues(editForm, "editConfluence");
+  editConfluenceChecklistEl.innerHTML = buildConfluenceChecklistHtml(strategy, "editConfluence", selected);
+}
+
+function updateEditConfluenceSummary() {
+  renderConfluenceSummary(editConfluenceSummaryEl, editStrategyEl.value, getCheckedValues(editForm, "editConfluence"));
+}
+
+async function handleCreateSubmit(event) {
+  event.preventDefault();
+  errorEl.textContent = "";
+
+  try {
+    const lotSize = Number(lotSizeEl.value);
+    if (!Number.isFinite(lotSize) || lotSize <= 0) {
+      failInline("Lot size must be a positive number.");
+      return;
+    }
+
+    const sessions = getCheckedValues(form, "session");
+    const missingRequiredFields = getMissingEntryFields({
+      pair: pairEl.value,
+      direction: directionEl.value,
+      strategy: strategyEl.value,
+      sessions,
+    });
+    if (missingRequiredFields.length) {
+      failInline(`Missing required: ${missingRequiredFields.join(", ")}.`);
+      return;
+    }
+
+    if (!createImages.beforeBlob && !createImages.afterBlob) {
+      failInline("At least one screenshot is required.");
+      return;
+    }
+
+    const pnl = parsePnl(pnlEl.value);
+    if (pnlEl.value.trim() && !Number.isFinite(pnl)) {
+      failInline("PnL must be numeric (example: +3.50 or -1.20).");
+      return;
+    }
+
+    let capturedAt = new Date();
+    if (entryManualTimeEnabled) {
+      if (!tradeDateEl.value || !tradeTimeEl.value) {
+        failInline("Manual time needs both date and time.");
+        return;
+      }
+      capturedAt = combineDateTime(tradeDateEl.value, tradeTimeEl.value);
+      if (Number.isNaN(capturedAt.getTime())) {
+        failInline("Invalid manual date/time.");
+        return;
+      }
+    }
+
+    const presentConfluences = getCheckedValues(form, "createConfluence");
+    const inferred = inferConfluence(strategyEl.value, presentConfluences);
+
+    registerPair(pairEl.value);
+    const beforeImageId = createImages.beforeBlob ? await dbSaveImage(createImages.beforeBlob) : null;
+    const afterImageId = createImages.afterBlob ? await dbSaveImage(createImages.afterBlob) : null;
+
+    const nowIso = new Date().toISOString();
+    const status = outcomeEl.value ? "closed" : "open";
+
+    const trade = normalizeTrade({
+      id: crypto.randomUUID(),
+      pair: pairEl.value,
+      direction: directionEl.value,
+      lot_size: Number(lotSize.toFixed(3)),
+      sessions,
+      strategy: strategyEl.value,
+      present_confluences: presentConfluences,
+      confluence_score: inferred.confluence_score,
+      total_confluences: inferred.total_confluences,
+      missing_confluences: inferred.missing_confluences,
+      required_missing_count: inferred.required_missing_count,
+      quality_missing_count: inferred.quality_missing_count,
+      setup_integrity: inferred.setup_integrity,
+      setup_grade: inferred.setup_grade,
+      outcome: outcomeEl.value,
+      pnl: Number.isFinite(pnl) ? pnl : null,
+      note: noteEl.value.trim(),
+      captured_at_utc: capturedAt.toISOString(),
+      captured_at_local: formatDateTime(capturedAt.toISOString()),
+      timezone_offset_min: capturedAt.getTimezoneOffset(),
+      status,
+      closed_at_utc: status === "closed" ? nowIso : null,
+      edit_count: 0,
+      before_image_id: beforeImageId,
+      after_image_id: afterImageId,
+      created_at: nowIso,
+      updated_at: nowIso,
+    });
+
+    await dbPutTrade(trade);
+    trades.unshift(trade);
+
+    saveDefaults({
+      pair: trade.pair,
+      direction: trade.direction,
+      lotSize: Number(trade.lot_size).toFixed(3),
+      strategy: trade.strategy,
+    });
+
+    showToast("Trade saved", "ok");
+    quickSavePulse();
+    handleClear({ showToast: false });
+    renderAll();
+  } catch (error) {
+    console.error(error);
+    failInline("Unable to save trade.");
+  }
+}
+
+function failInline(message) {
+  errorEl.textContent = message;
+  showToast(message, "bad");
+}
+
+function quickSavePulse() {
+  saveBtn.animate(
+    [
+      { transform: "scale(1)", filter: "brightness(1)" },
+      { transform: "scale(1.03)", filter: "brightness(1.06)" },
+      { transform: "scale(1)", filter: "brightness(1)" },
+    ],
+    { duration: 280, easing: "ease-out" }
+  );
+}
+
+function showToast(message, tone) {
+  toast.show(message, tone);
+}
+
+function setHistoryView(mode) {
+  historyViewMode = mode;
+  if (mode === "grid") {
+    openInlineEditorId = null;
+  }
+  viewListBtn.classList.toggle("is-active", mode === "list");
+  viewGridBtn.classList.toggle("is-active", mode === "grid");
+  renderHistory(getFilteredTrades());
+}
+
+function getFilteredTrades() {
+  return trades.filter((trade) => {
+    const pairOk = !filterPairEl.value || trade.pair === filterPairEl.value;
+    const sessionOk = !filterSessionEl.value || (trade.sessions || []).includes(filterSessionEl.value);
+    const outcomeOk =
+      !filterOutcomeEl.value ||
+      (filterOutcomeEl.value === "__OPEN__" ? trade.status === "open" : trade.outcome === filterOutcomeEl.value);
+    const strategyOk = !filterStrategyEl.value || trade.strategy === filterStrategyEl.value;
+    const integrityOk = !filterIntegrityEl.value || trade.setup_integrity === filterIntegrityEl.value;
+
+    return pairOk && sessionOk && outcomeOk && strategyOk && integrityOk;
+  });
+}
+
+function renderAll() {
+  renderTopInsightReel(trades);
+  renderFilteredSections();
+}
+
+function renderFilteredSections() {
+  const rows = getFilteredTrades();
+  renderAnalytics(rows);
+  renderHistory(rows);
+}
+
+function sortTradesForDisplay(rows) {
+  return sortTradesForDisplayWithOpenFirst(rows, toMillis);
+}
+
+async function renderHistory(rows) {
+  if (isRenderingHistory) {
+    return;
+  }
+  isRenderingHistory = true;
+
+  try {
+    const ordered = sortTradesForDisplay(rows);
+    const openRows = ordered.filter((trade) => trade.status === "open");
+    const closedRows = ordered.filter((trade) => trade.status !== "open");
+
+    if (historyViewMode === "list") {
+      releaseHistoryUrls();
+      renderHistoryList(openRows, closedRows);
+    } else {
+      await renderHistoryGrid(openRows, closedRows);
+    }
+  } finally {
+    isRenderingHistory = false;
+  }
+}
+
+function renderHistoryList(openRows, closedRows) {
+  historyGalleryEl.className = "history-list";
+  historyGalleryEl.innerHTML = "";
+
+  if (!openRows.length && !closedRows.length) {
+    historyGalleryEl.innerHTML = '<div class="muted-empty">No trades found.</div>';
+    return;
+  }
+
+  if (openRows.length) {
+    historyGalleryEl.appendChild(createGroupTitle("Open Trades", true, openRows.length));
+    openRows.forEach((trade) => {
+      const row = createTradeRow(trade);
+      historyGalleryEl.appendChild(row);
+      if (openInlineEditorId === trade.id) {
+        historyGalleryEl.appendChild(createInlineEditorRow(trade));
+      }
+    });
+  }
+
+  if (closedRows.length) {
+    historyGalleryEl.appendChild(createGroupTitle("Closed Trades", false, closedRows.length));
+    closedRows.forEach((trade) => {
+      const row = createTradeRow(trade);
+      historyGalleryEl.appendChild(row);
+      if (openInlineEditorId === trade.id) {
+        historyGalleryEl.appendChild(createInlineEditorRow(trade));
+      }
+    });
+  }
+}
+
+async function renderHistoryGrid(openRows, closedRows) {
+  historyGalleryEl.className = "history-list";
+  historyGalleryEl.innerHTML = "";
+
+  if (!openRows.length && !closedRows.length) {
+    historyGalleryEl.innerHTML = '<div class="muted-empty">No trades found.</div>';
+    return;
+  }
+
+  releaseHistoryUrls();
+  const urlMap = await loadImageUrls([...openRows, ...closedRows]);
+
+  if (openRows.length) {
+    historyGalleryEl.appendChild(createGroupTitle("Open Trades", true, openRows.length));
+    historyGalleryEl.appendChild(createCardGroup(openRows, urlMap));
+  }
+
+  if (closedRows.length) {
+    historyGalleryEl.appendChild(createGroupTitle("Closed Trades", false, closedRows.length));
+    historyGalleryEl.appendChild(createCardGroup(closedRows, urlMap));
+  }
+}
+
+function createGroupTitle(label, isOpen, count) {
+  const title = document.createElement("div");
+  title.className = `group-title${isOpen ? " open" : ""}`;
+  title.textContent = `${label} (${count})`;
+  return title;
+}
+
+function createCardGroup(rows, urlMap) {
+  const grid = document.createElement("div");
+  grid.className = "history-gallery group-gallery";
+
+  rows.forEach((trade) => {
+    const beforeUrl = trade.before_image_id ? urlMap.get(trade.before_image_id) : "";
+    const afterUrl = trade.after_image_id ? urlMap.get(trade.after_image_id) : "";
+
+    const setupClass = integrityClass(trade.setup_integrity);
+    const outcomeClass = badgeClassForOutcome(trade.outcome);
+    const pnlClass = Number.isFinite(trade.pnl) ? (trade.pnl >= 0 ? "pnl-pos" : "pnl-neg") : "muted-empty";
+
+    const beforeImg = beforeUrl
+      ? `<img class="trade-img" src="${beforeUrl}" alt="Before screenshot" />`
+      : `<div class="trade-img muted-empty"></div>`;
+    const afterImg = afterUrl
+      ? `<img class="trade-img" src="${afterUrl}" alt="After screenshot" />`
+      : `<div class="trade-img muted-empty"></div>`;
+
+    const card = document.createElement("article");
+    card.className = `trade-card${trade.status === "open" ? " open-trade" : ""}`;
+    card.innerHTML = `
+      <div class="trade-image-grid">
+        ${beforeImg}
+        ${afterImg}
+      </div>
+      <div class="trade-caption">
+        <div class="cap-top">
+          <div class="cap-pair">${escapeHtml(trade.pair)} · ${escapeHtml(trade.direction)}</div>
+          <div class="cap-time">${formatDateTime(trade.captured_at_utc)}</div>
+        </div>
+        <div class="cap-meta">
+          ${trade.status === "open" ? '<span class="open-chip">Open</span>' : ""}
+          <span class="badge ${setupClass}">${escapeHtml(integrityLabel(trade.setup_integrity))}</span>
+          <span class="badge ${outcomeClass}">${escapeHtml(trade.outcome || "Open")}</span>
+          <span class="badge b-info">${escapeHtml(trade.strategy || "-")}</span>
+          <span class="badge b-info">${escapeHtml((trade.sessions || []).join(" / "))}</span>
+          <span class="badge b-info">Lot ${Number(trade.lot_size).toFixed(3)}</span>
+          <span class="badge b-info">Grade ${escapeHtml(trade.setup_grade || "-")}</span>
+        </div>
+        <div class="cap-note">${escapeHtml(trade.note || "-")}</div>
+        <div class="cap-bottom">
+          <div class="${pnlClass}">${formatMoney(trade.pnl)}</div>
+          <button class="edit-btn" data-edit-id="${trade.id}" type="button" title="Edit trade">${editIconSvg()}</button>
+        </div>
+      </div>
+    `;
+
+    grid.appendChild(card);
+  });
+
+  return grid;
+}
+
+function createTradeRow(trade) {
+  const row = document.createElement("div");
+  const outcomeClass = badgeClassForOutcome(trade.outcome);
+  const setupClass = integrityClass(trade.setup_integrity);
+  const pnlClass = Number.isFinite(trade.pnl) ? (trade.pnl >= 0 ? "pnl-pos" : "pnl-neg") : "muted-empty";
+  const showOutcomeBadge = trade.status !== "open" || (trade.outcome && trade.outcome !== "Open");
+  const outcomeBadgeHtml = showOutcomeBadge
+    ? `<span class="badge ${outcomeClass}">${escapeHtml(trade.outcome || "Open")}</span>`
+    : "";
+
+  row.className = `trade-row${trade.status === "open" ? " open-trade" : ""}`;
+  row.innerHTML = `
+    <div class="tr-pair">${escapeHtml(trade.pair)} <span class="tr-dir">${escapeHtml(trade.direction)}</span></div>
+    <div class="tr-time">${escapeHtml(formatDateTime(trade.captured_at_utc))}</div>
+    <div class="tr-badges">
+      ${trade.status === "open" ? '<span class="open-chip">Open</span>' : ""}
+      ${outcomeBadgeHtml}
+      <span class="badge ${setupClass}">${escapeHtml(integrityLabel(trade.setup_integrity))}</span>
+      <span class="badge b-info">${escapeHtml((trade.sessions || []).join(" / "))}</span>
+      <span class="badge b-info">${escapeHtml(trade.strategy || "-")}</span>
+      <span class="badge b-info">Grade ${escapeHtml(trade.setup_grade || "-")}</span>
+    </div>
+    <div class="tr-pnl ${pnlClass}">${escapeHtml(formatMoney(trade.pnl))}</div>
+    <div class="tr-note">${escapeHtml(trade.note || "")}</div>
+    <button class="edit-btn" data-edit-id="${trade.id}" type="button" title="Edit trade">${editIconSvg()}</button>
+  `;
+  return row;
+}
+
+function createInlineEditorRow(trade) {
+  const row = document.createElement("form");
+  row.className = "inline-editor-row";
+  row.dataset.id = trade.id;
+
+  const date = toDateInputValue(trade.captured_at_utc || new Date());
+  const time = toTimeInputValue(trade.captured_at_utc || new Date());
+
+  row.innerHTML = `
+    <div class="inline-grid">
+      <label class="field">Pair
+        <select class="inline-pair">${pairOptionsHtml(trade.pair, true, true)}</select>
+      </label>
+      <label class="field">Direction
+        <select class="inline-direction">
+          ${optionsHtml(["Buy", "Sell"], trade.direction, true)}
+        </select>
+      </label>
+      <label class="field">Lot Size
+        <input class="inline-lot" type="number" min="0.001" step="0.001" value="${Number(trade.lot_size).toFixed(3)}" />
+      </label>
+      <label class="field">Strategy
+        <select class="inline-strategy">${optionsHtml(getStrategyOptionsForEdit(trade.strategy), trade.strategy, !isSingleStrategyMode())}</select>
+      </label>
+
+      <div class="field">Session
+        <div class="chip-row">
+          ${SESSION_OPTIONS.map((session) => {
+            const checked = (trade.sessions || []).includes(session) ? "checked" : "";
+            return `<label class="chip"><input type="checkbox" name="inlineSession" value="${session}" ${checked} /><span>${session}</span></label>`;
+          }).join("")}
+        </div>
+      </div>
+
+      <label class="field">Outcome
+        <select class="inline-outcome">
+          <option value="">Open - fill later</option>
+          ${OUTCOMES.map((outcome) => `<option value="${outcome}" ${trade.outcome === outcome ? "selected" : ""}>${outcome}</option>`).join("")}
+        </select>
+      </label>
+
+      <label class="field">PnL ($)
+        <input class="inline-pnl" type="text" value="${Number.isFinite(trade.pnl) ? escapeHtmlAttr(String(trade.pnl)) : ""}" />
+      </label>
+
+      <label class="field">Note
+        <input class="inline-note" type="text" maxlength="240" value="${escapeHtmlAttr(trade.note || "")}" />
+      </label>
+    </div>
+
+    <details class="confluence-card confluence-collapsible">
+      <summary class="confluence-toggle">
+        <span>Setup Checklist</span>
+        <span class="confluence-toggle-meta">
+          <span class="micro-hint">Tap to expand</span>
+          <span class="confluence-toggle-v" aria-hidden="true">⌄</span>
+        </span>
+      </summary>
+      <div class="confluence-body">
+        <div class="section-head section-head-tight">
+          <div class="micro-hint">Tick all confluences that were present</div>
+          <button type="button" class="btn btn-ghost btn-tiny time-toggle-btn" data-inline-time-toggle="${trade.id}">Set Time Manually</button>
+        </div>
+        <div class="manual-time-fields" data-inline-time-fields="${trade.id}" style="display: none">
+          <label class="field">Date<input class="inline-date" type="date" value="${date}" /></label>
+          <label class="field">Time<input class="inline-time" type="time" value="${time}" /></label>
+        </div>
+        <div class="confluence-grid inline-confluence"></div>
+        <div class="confluence-summary inline-summary"></div>
+      </div>
+    </details>
+
+    <div class="inline-grid">
+      <label class="field">Before Image
+        <input class="inline-before-file" type="file" accept="image/*" />
+      </label>
+      <label class="field">After Image
+        <input class="inline-after-file" type="file" accept="image/*" />
+      </label>
+      <label class="field">Before (${trade.before_image_id ? "present" : "missing"})
+        <input class="inline-before-remove" type="checkbox" ${trade.before_image_id ? "" : "disabled"} /> Remove
+      </label>
+      <label class="field">After (${trade.after_image_id ? "present" : "missing"})
+        <input class="inline-after-remove" type="checkbox" ${trade.after_image_id ? "" : "disabled"} /> Remove
+      </label>
+    </div>
+
+    <div class="action-row">
+      <div class="inline-delete-hint">${trade.status === "closed" ? "Closed trades require hold to delete" : "Open trades use normal delete"}</div>
+      <button class="btn btn-danger" type="button" data-inline-delete="${trade.id}">Delete</button>
+      <button class="btn btn-ghost" type="button" data-inline-cancel="${trade.id}">Cancel</button>
+      <button class="btn btn-primary" type="submit">Save</button>
+    </div>
+  `;
+
+  const strategySelect = row.querySelector(".inline-strategy");
+  const pairSelect = row.querySelector(".inline-pair");
+  const confluenceContainer = row.querySelector(".inline-confluence");
+  const confluenceSummary = row.querySelector(".inline-summary");
+  if (pairSelect instanceof HTMLSelectElement) {
+    pairSelect.dataset.prevPair = normalizePairCode(trade.pair);
+  }
+  if (strategySelect instanceof HTMLSelectElement && isSingleStrategyMode()) {
+    strategySelect.disabled = getAllowedStrategies().includes(trade.strategy);
+  }
+
+  const renderInlineConfluence = () => {
+    const currentStrategy = strategySelect.value;
+    const selected = getCheckedValues(row, "inlineConfluence");
+    confluenceContainer.innerHTML = buildConfluenceChecklistHtml(currentStrategy, "inlineConfluence", selected);
+    renderConfluenceSummary(confluenceSummary, currentStrategy, getCheckedValues(row, "inlineConfluence"));
+  };
+
+  confluenceContainer.innerHTML = buildConfluenceChecklistHtml(trade.strategy, "inlineConfluence", trade.present_confluences || []);
+  renderConfluenceSummary(confluenceSummary, trade.strategy, trade.present_confluences || []);
+
+  row.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    if (target.classList.contains("inline-pair")) {
+      handlePairSelectChange(target);
+      return;
+    }
+
+    if (target.classList.contains("inline-strategy") || target.getAttribute("name") === "inlineConfluence") {
+      renderInlineConfluence();
+    }
+  });
+
+  row.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await handleInlineSubmit(row, trade);
+  });
+
+  const cancelBtn = row.querySelector(`[data-inline-cancel="${trade.id}"]`);
+  cancelBtn?.addEventListener("click", () => {
+    openInlineEditorId = null;
+    renderAll();
+  });
+
+  const timeToggle = row.querySelector(`[data-inline-time-toggle="${trade.id}"]`);
+  const timeFields = row.querySelector(`[data-inline-time-fields="${trade.id}"]`);
+  let manualTimeEnabled = false;
+
+  timeToggle?.addEventListener("click", () => {
+    manualTimeEnabled = !manualTimeEnabled;
+    timeFields.style.display = manualTimeEnabled ? "grid" : "none";
+    timeToggle.textContent = manualTimeEnabled ? "Use Existing Time" : "Set Time Manually";
+  });
+
+  row.dataset.manualTime = "false";
+  timeToggle?.addEventListener("click", () => {
+    row.dataset.manualTime = manualTimeEnabled ? "true" : "false";
+  });
+
+  const deleteBtn = row.querySelector(`[data-inline-delete="${trade.id}"]`);
+  if (deleteBtn instanceof HTMLButtonElement) {
+    configureDeleteButton(deleteBtn, trade, async () => {
+      await deleteTrade(trade.id);
+    });
+  }
+
+  return row;
+}
+
+async function handleInlineSubmit(formEl, existingTrade) {
+  const lot = Number(formEl.querySelector(".inline-lot")?.value || "");
+  if (!Number.isFinite(lot) || lot <= 0) {
+    showToast("Inline edit: invalid lot size", "bad");
+    return;
+  }
+
+  const pair = formEl.querySelector(".inline-pair")?.value || "";
+  const direction = formEl.querySelector(".inline-direction")?.value || "";
+  const strategy = formEl.querySelector(".inline-strategy")?.value || "";
+  const sessions = getCheckedValues(formEl, "inlineSession");
+  const presentConfluences = getCheckedValues(formEl, "inlineConfluence");
+  const outcome = formEl.querySelector(".inline-outcome")?.value || "";
+  const note = (formEl.querySelector(".inline-note")?.value || "").trim();
+  const pnl = parsePnl(formEl.querySelector(".inline-pnl")?.value || "");
+
+  if (!pair || !direction || !strategy || sessions.length === 0) {
+    showToast("Inline edit: missing required fields", "bad");
+    return;
+  }
+
+  if ((formEl.querySelector(".inline-pnl")?.value || "").trim() && !Number.isFinite(pnl)) {
+    showToast("Inline edit: invalid PnL", "bad");
+    return;
+  }
+
+  let capturedAtUtc = existingTrade.captured_at_utc;
+  if (formEl.dataset.manualTime === "true") {
+    const dateValue = formEl.querySelector(".inline-date")?.value;
+    const timeValue = formEl.querySelector(".inline-time")?.value;
+    if (!dateValue || !timeValue) {
+      showToast("Inline edit: manual time needs date and time", "bad");
+      return;
+    }
+    const parsed = combineDateTime(dateValue, timeValue);
+    if (Number.isNaN(parsed.getTime())) {
+      showToast("Inline edit: invalid manual date/time", "bad");
+      return;
+    }
+    capturedAtUtc = parsed.toISOString();
+  }
+
+  const beforeFile = formEl.querySelector(".inline-before-file")?.files?.[0];
+  const afterFile = formEl.querySelector(".inline-after-file")?.files?.[0];
+  const removeBefore = Boolean(formEl.querySelector(".inline-before-remove")?.checked);
+  const removeAfter = Boolean(formEl.querySelector(".inline-after-remove")?.checked);
+
+  let beforeBlob = null;
+  let afterBlob = null;
+
+  if (beforeFile) {
+    beforeBlob = await compressImage(beforeFile);
+  }
+  if (afterFile) {
+    afterBlob = await compressImage(afterFile);
+  }
+
+  const finalBefore = removeBefore && !beforeBlob ? null : existingTrade.before_image_id;
+  const finalAfter = removeAfter && !afterBlob ? null : existingTrade.after_image_id;
+  if (!finalBefore && !finalAfter && !beforeBlob && !afterBlob) {
+    showToast("At least one screenshot is required", "bad");
+    return;
+  }
+
+  await updateTrade(existingTrade.id, {
+    pair,
+    direction,
+    lot_size: Number(lot.toFixed(3)),
+    sessions,
+    strategy,
+    present_confluences: presentConfluences,
+    outcome,
+    pnl: Number.isFinite(pnl) ? pnl : null,
+    note,
+    captured_at_utc: capturedAtUtc,
+    timezone_offset_min: new Date(capturedAtUtc).getTimezoneOffset(),
+    imagePatch: {
+      before: { remove: removeBefore, newBlob: beforeBlob },
+      after: { remove: removeAfter, newBlob: afterBlob },
+    },
+  });
+
+  openInlineEditorId = null;
+  showToast("Trade updated", "ok");
+  renderAll();
+}
+
+function onHistoryActionClick(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const editBtn = target.closest("[data-edit-id]");
+  if (!editBtn) {
+    return;
+  }
+
+  const id = editBtn.getAttribute("data-edit-id");
+  if (!id) {
+    return;
+  }
+
+  if (historyViewMode === "list") {
+    openInlineEditorId = openInlineEditorId === id ? null : id;
+    renderHistory(getFilteredTrades());
+    return;
+  }
+
+  openEditModal(id);
+}
+
+async function openEditModal(id) {
+  const trade = trades.find((item) => item.id === id);
+  if (!trade) {
+    return;
+  }
+
+  registerPair(trade.pair);
+  editIdEl.value = trade.id;
+  fillStrategyOptions(editStrategyEl, true, trade.strategy, { includeLegacy: true });
+  editPairEl.value = trade.pair;
+  editPairEl.dataset.prevPair = normalizePairCode(trade.pair);
+  editDirectionEl.value = trade.direction;
+  editLotSizeEl.value = Number(trade.lot_size).toFixed(3);
+  editStrategyEl.value = trade.strategy || "";
+  if (isSingleStrategyMode() && getAllowedStrategies().includes(editStrategyEl.value) && getStrategyOptionsForEdit(editStrategyEl.value).length === 1) {
+    editStrategyEl.disabled = true;
+  }
+  editOutcomeEl.value = trade.outcome || "";
+  editPnlEl.value = Number.isFinite(trade.pnl) ? String(trade.pnl) : "";
+  editNoteEl.value = trade.note || "";
+
+  editManualTimeEnabled = false;
+  editManualTimeFieldsEl.style.display = "none";
+  editManualTimeToggleEl.textContent = "Set Time Manually";
+  if (editConfluenceDetailsEl) {
+    editConfluenceDetailsEl.open = false;
+  }
+
+  const capturedDate = trade.captured_at_utc ? new Date(trade.captured_at_utc) : new Date();
+  editDateEl.value = toDateInputValue(capturedDate);
+  editTimeEl.value = toTimeInputValue(capturedDate);
+
+  syncEditSessions(trade.sessions || []);
+  renderEditConfluenceChecklist(trade.present_confluences || []);
+  updateEditConfluenceSummary();
+
+  editImages.beforeImageId = trade.before_image_id || null;
+  editImages.afterImageId = trade.after_image_id || null;
+  editImages.beforeNewBlob = null;
+  editImages.afterNewBlob = null;
+  editImages.beforeRemoved = false;
+  editImages.afterRemoved = false;
+
+  editBeforeBinder.clearSilent();
+  editAfterBinder.clearSilent();
+
+  if (trade.before_image_id) {
+    const beforeBlob = await dbGetImageBlob(trade.before_image_id);
+    if (beforeBlob) {
+      editBeforeBinder.setPreviewBlob(beforeBlob);
+    }
+  }
+
+  if (trade.after_image_id) {
+    const afterBlob = await dbGetImageBlob(trade.after_image_id);
+    if (afterBlob) {
+      editAfterBinder.setPreviewBlob(afterBlob);
+    }
+  }
+
+  configureDeleteButton(deleteTradeBtn, trade, async () => {
+    await deleteTrade(trade.id);
+    closeEditModal();
+  });
+
+  editErrorEl.textContent = "";
+  editModal.style.display = "grid";
+}
+
+function closeEditModal() {
+  editModal.style.display = "none";
+}
+
+function syncEditSessions(values) {
+  const set = new Set(values);
+  editForm.querySelectorAll('input[name="editSession"]').forEach((input) => {
+    input.checked = set.has(input.value);
+  });
+}
+
+async function handleEditSubmit(event) {
+  event.preventDefault();
+  editErrorEl.textContent = "";
+
+  const trade = trades.find((item) => item.id === editIdEl.value);
+  if (!trade) {
+    return;
+  }
+
+  const lot = Number(editLotSizeEl.value);
+  if (!Number.isFinite(lot) || lot <= 0) {
+    editErrorEl.textContent = "Lot size must be a positive number.";
+    showToast("Invalid lot size", "bad");
+    return;
+  }
+
+  const sessions = getCheckedValues(editForm, "editSession");
+  if (!editPairEl.value || !editDirectionEl.value || !editStrategyEl.value || sessions.length === 0) {
+    editErrorEl.textContent = "Pair, direction, strategy and sessions are required.";
+    showToast("Missing required fields", "bad");
+    return;
+  }
+
+  const pnl = parsePnl(editPnlEl.value);
+  if (editPnlEl.value.trim() && !Number.isFinite(pnl)) {
+    editErrorEl.textContent = "PnL must be numeric.";
+    showToast("Invalid PnL", "bad");
+    return;
+  }
+
+  let capturedAtUtc = trade.captured_at_utc;
+  if (editManualTimeEnabled) {
+    if (!editDateEl.value || !editTimeEl.value) {
+      editErrorEl.textContent = "Manual time requires date and time.";
+      showToast("Manual date/time missing", "bad");
+      return;
+    }
+    const parsed = combineDateTime(editDateEl.value, editTimeEl.value);
+    if (Number.isNaN(parsed.getTime())) {
+      editErrorEl.textContent = "Invalid manual date/time.";
+      showToast("Invalid manual date/time", "bad");
+      return;
+    }
+    capturedAtUtc = parsed.toISOString();
+  }
+
+  const beforeStillPresent = (editImages.beforeImageId && !editImages.beforeRemoved) || editImages.beforeNewBlob;
+  const afterStillPresent = (editImages.afterImageId && !editImages.afterRemoved) || editImages.afterNewBlob;
+  if (!beforeStillPresent && !afterStillPresent) {
+    editErrorEl.textContent = "At least one screenshot is required.";
+    showToast("At least one screenshot required", "bad");
+    return;
+  }
+
+  await updateTrade(trade.id, {
+    pair: editPairEl.value,
+    direction: editDirectionEl.value,
+    lot_size: Number(lot.toFixed(3)),
+    sessions,
+    strategy: editStrategyEl.value,
+    present_confluences: getCheckedValues(editForm, "editConfluence"),
+    outcome: editOutcomeEl.value,
+    pnl: Number.isFinite(pnl) ? pnl : null,
+    note: editNoteEl.value.trim(),
+    captured_at_utc: capturedAtUtc,
+    timezone_offset_min: new Date(capturedAtUtc).getTimezoneOffset(),
+    imagePatch: {
+      before: { remove: editImages.beforeRemoved, newBlob: editImages.beforeNewBlob },
+      after: { remove: editImages.afterRemoved, newBlob: editImages.afterNewBlob },
+    },
+  });
+
+  closeEditModal();
+  renderAll();
+  showToast("Trade updated", "ok");
+}
+
+async function updateTrade(id, patch) {
+  const index = trades.findIndex((trade) => trade.id === id);
+  if (index === -1) {
+    return;
+  }
+
+  registerPair(patch.pair);
+  const current = trades[index];
+  const beforeResult = await applyImagePatch(current.before_image_id, patch.imagePatch?.before);
+  const afterResult = await applyImagePatch(current.after_image_id, patch.imagePatch?.after);
+
+  const inferred = inferConfluence(patch.strategy, patch.present_confluences || []);
+  const status = patch.outcome ? "closed" : "open";
+
+  let closedAtUtc = current.closed_at_utc || null;
+  if (status === "closed" && !closedAtUtc) {
+    closedAtUtc = new Date().toISOString();
+  }
+  if (status === "open") {
+    closedAtUtc = null;
+  }
+
+  const nextTrade = normalizeTrade({
+    ...current,
+    pair: patch.pair,
+    direction: patch.direction,
+    lot_size: patch.lot_size,
+    sessions: patch.sessions,
+    strategy: patch.strategy,
+    present_confluences: patch.present_confluences,
+    confluence_score: inferred.confluence_score,
+    total_confluences: inferred.total_confluences,
+    missing_confluences: inferred.missing_confluences,
+    required_missing_count: inferred.required_missing_count,
+    quality_missing_count: inferred.quality_missing_count,
+    setup_integrity: inferred.setup_integrity,
+    setup_grade: inferred.setup_grade,
+    outcome: patch.outcome,
+    pnl: patch.pnl,
+    note: patch.note,
+    captured_at_utc: patch.captured_at_utc,
+    captured_at_local: formatDateTime(patch.captured_at_utc),
+    timezone_offset_min: patch.timezone_offset_min,
+    status,
+    closed_at_utc: closedAtUtc,
+    before_image_id: beforeResult,
+    after_image_id: afterResult,
+    edit_count: Number(current.edit_count || 0) + 1,
+    updated_at: new Date().toISOString(),
+  });
+
+  trades[index] = nextTrade;
+  await dbPutTrade(nextTrade);
+}
+
+async function applyImagePatch(currentImageId, imagePatch) {
+  if (!imagePatch) {
+    return currentImageId || null;
+  }
+
+  let imageId = currentImageId || null;
+
+  if (imagePatch.remove && imageId) {
+    await dbDeleteImage(imageId);
+    imageId = null;
+  }
+
+  if (imagePatch.newBlob) {
+    const newId = await dbSaveImage(imagePatch.newBlob);
+    if (imageId) {
+      await dbDeleteImage(imageId);
+    }
+    imageId = newId;
+  }
+
+  return imageId;
+}
+
+function configureDeleteButton(buttonEl, trade, onDelete) {
+  buttonEl.classList.remove("delete-hold");
+  buttonEl.style.removeProperty("--hold-progress");
+
+  buttonEl.onpointerdown = null;
+  buttonEl.onpointerup = null;
+  buttonEl.onpointerleave = null;
+  buttonEl.onclick = null;
+
+  if (trade.status === "closed") {
+    buttonEl.textContent = "Hold 3s to Delete";
+    buttonEl.classList.add("delete-hold");
+
+    let holdStart = 0;
+    let raf = 0;
+    let holdTimeout = 0;
+    let confirmed = false;
+
+    const resetHold = () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(holdTimeout);
+      buttonEl.style.setProperty("--hold-progress", "0%");
+      holdStart = 0;
+    };
+
+    const step = () => {
+      if (!holdStart) {
+        return;
+      }
+      const elapsed = performance.now() - holdStart;
+      const progress = Math.min(100, (elapsed / 3000) * 100);
+      buttonEl.style.setProperty("--hold-progress", `${progress}%`);
+      if (progress < 100) {
+        raf = window.requestAnimationFrame(step);
+      }
+    };
+
+    buttonEl.onpointerdown = async (event) => {
+      event.preventDefault();
+      confirmed = window.confirm("Delete this closed trade? Hold the button for 3 seconds to confirm.");
+      if (!confirmed) {
+        resetHold();
+        return;
+      }
+
+      holdStart = performance.now();
+      raf = window.requestAnimationFrame(step);
+      holdTimeout = window.setTimeout(async () => {
+        resetHold();
+        await onDelete();
+      }, 3000);
+    };
+
+    buttonEl.onpointerup = resetHold;
+    buttonEl.onpointerleave = resetHold;
+    buttonEl.onclick = (event) => {
+      event.preventDefault();
+    };
+    return;
+  }
+
+  buttonEl.textContent = "Delete";
+  buttonEl.onclick = async () => {
+    const confirmed = window.confirm("Delete this trade?");
+    if (!confirmed) {
+      return;
+    }
+    await onDelete();
+  };
+}
+
+async function deleteTrade(id) {
+  const index = trades.findIndex((trade) => trade.id === id);
+  if (index === -1) {
+    return;
+  }
+
+  const trade = trades[index];
+  if (trade.before_image_id) {
+    await dbDeleteImage(trade.before_image_id);
+  }
+  if (trade.after_image_id) {
+    await dbDeleteImage(trade.after_image_id);
+  }
+
+  await dbDeleteTrade(id);
+  trades.splice(index, 1);
+
+  if (openInlineEditorId === id) {
+    openInlineEditorId = null;
+  }
+
+  showToast("Trade deleted", "ok");
+  renderAll();
+}
+
+function badgeClassForOutcome(outcome) {
+  switch (outcome) {
+    case "Full Win":
+      return "b-ok";
+    case "Full Loss":
+      return "b-bad";
+    case "Partial + BE":
+    case "Breakeven":
+      return "b-info";
+    default:
+      return "b-warn";
+  }
+}
+
+function integrityClass(integrity) {
+  switch (integrity) {
+    case "full_confluence":
+      return "b-ok";
+    case "one_soft_confluence_missing":
+      return "b-info";
+    case "multiple_soft_confluences_missing":
+      return "b-warn";
+    default:
+      return "b-bad";
+  }
+}
+
+function editIconSvg() {
+  return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+}
+
+async function loadImageUrls(rows) {
+  const ids = [...new Set(rows.flatMap((row) => [row.before_image_id, row.after_image_id]).filter(Boolean))];
+  const map = new Map();
+
+  if (!ids.length) {
+    return map;
+  }
+
+  const blobs = await dbGetImages(ids);
+  blobs.forEach((blob, id) => {
+    const url = URL.createObjectURL(blob);
+    historyObjectUrls.push(url);
+    map.set(id, url);
+  });
+
+  return map;
+}
+
+function releaseHistoryUrls() {
+  historyObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  historyObjectUrls = [];
+}
+
+function renderTopInsightReel(rows) {
+  if (!topInsightPanelEl || !appSettings.showInsightReel) {
+    if (analyticsCarousel) {
+      analyticsCarousel.destroy();
+      analyticsCarousel = null;
+    }
+    if (topInsightPanelEl) {
+      topInsightPanelEl.innerHTML = "";
+    }
+    return;
+  }
+
+  const analytics = computeAnalytics(rows);
+  const slides = buildTopInsightSlides(analytics);
+  topInsightPanelEl.innerHTML = renderInsightOrbitCarousel(slides, "topInsightCarousel");
+
+  if (analyticsCarousel) {
+    analyticsCarousel.destroy();
+    analyticsCarousel = null;
+  }
+  initInsightOrbitCarousel(slides, "topInsightCarousel");
+}
+
+function renderAnalytics(rows) {
+  const analytics = computeAnalytics(rows);
+  const keys = TAB_INSIGHTS[activeAnalyticsTab] || [];
+
+  const cards = keys
+    .map((key) => {
+      const value = formatMetricValue(key, analytics);
+      return `
+        <article class="stat">
+          <div class="label">${escapeHtml(METRIC_LABELS[key] || key)}</div>
+          <div class="value">${escapeHtml(value)}</div>
+        </article>
+      `;
+    })
+    .join("");
+
+  analyticsPanelEl.innerHTML = `
+    <div class="stats-grid">${cards}</div>
+    <div id="analyticsVisuals" class="chart-grid"></div>
+    <div id="analyticsTables" class="table-wrap"></div>
+  `;
+
+  destroyCharts();
+  renderAnalyticsVisuals(activeAnalyticsTab, analytics);
+}
+
+function buildTopInsightSlides(analytics) {
+  const deck = buildInsightDeck(analytics);
+
+  const fSlide = {
+    kicker: "Risk Discipline",
+    title: "Grade F Damage Tracker",
+    text: `Top missing required confluence: ${analytics.topMissingRequiredConfluenceFMonth || "None"}`,
+    metrics: [
+      ["F Trades (Month)", String(analytics.fTradesThisMonth)],
+      ["Net PnL from F", formatMoney(analytics.fNetPnlThisMonth)],
+      ["% Loss from F", `${analytics.fLossContributionPct.toFixed(1)}%`],
+    ],
+  };
+
+  const pulseSlide = {
+    kicker: "Performance Snapshot",
+    title: "Month Pulse",
+    text: `Net ${formatMoney(analytics.netPnlThisMonth)} from ${analytics.closedTradesThisMonth} closed trades this month.`,
+    metrics: [
+      ["Net (Month)", formatMoney(analytics.netPnlThisMonth)],
+      ["Win Rate", `${analytics.winRate.toFixed(1)}%`],
+      ["Expectancy", formatMoney(analytics.expectancy)],
+    ],
+  };
+
+  const deckSlides = deck.map((item) => ({
+    kicker: item.kicker || "Insight Spotlight",
+    title: item.title,
+    text: item.text,
+    metrics: item.metrics || [],
+  }));
+
+  return [fSlide, pulseSlide, ...deckSlides];
+}
+
+function renderInsightOrbitCarousel(slides, carouselId = "topInsightCarousel") {
+  if (!slides.length) {
+    return '<div class="muted-empty">Log more trades to unlock insight carousel.</div>';
+  }
+  return `
+    <section class="insight-carousel-shell">
+      <div id="${escapeHtmlAttr(carouselId)}" class="insight-orbit" aria-label="Insight Reel Carousel">
+        <div class="orbit-controls">
+          <button class="orbit-nav orbit-prev" type="button" aria-label="Previous insight">←</button>
+          <button class="orbit-nav orbit-next" type="button" aria-label="Next insight">→</button>
+        </div>
+        <div class="insight-orbit-stage">
+          <div class="insight-orbit-track"></div>
+        </div>
+        <div class="orbit-footer">
+          <div class="orbit-dots"></div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function initInsightOrbitCarousel(slides, carouselId = "topInsightCarousel") {
+  const root = document.getElementById(carouselId);
+  if (!root || !slides.length) {
+    return;
+  }
+  analyticsCarousel = new InsightOrbitCarousel(root, slides, {
+    autoplayMs: 8200,
+    startIndex: 0,
+    escapeHtml,
+  });
+}
+
+function buildInsightDeck(analytics) {
+  const monthWithoutF = analytics.netPnlThisMonth - analytics.fNetPnlThisMonth;
+  const nyEdge = analytics.sessionExpectancy.NY - analytics.sessionExpectancy.London;
+  const fullVsHardWinGap = analytics.fullConfluenceWinRate - analytics.hardInvalidationWinRate;
+  const afterDelta = analytics.afterImageOutcomeDelta;
+  const sizeDelta = analytics.highLotUnderperformance;
+  const strategyRanked = sortStrategiesByTradeCount(analytics);
+  const primaryStrategy = strategyRanked[0]?.[0] || "N/A";
+  const secondaryStrategy = strategyRanked[1]?.[0] || "";
+  const primaryNet = analytics.strategyNetPnl?.[primaryStrategy] || 0;
+  const secondaryNet = analytics.strategyNetPnl?.[secondaryStrategy] || 0;
+  const primaryWin = analytics.strategyWinRate?.[primaryStrategy] || 0;
+  const secondaryWin = analytics.strategyWinRate?.[secondaryStrategy] || 0;
+  const strategyWinDelta = primaryWin - secondaryWin;
+
+  return [
+    {
+      kicker: "Risk Discipline",
+      title: "Rule Break Cost",
+      text: `You lost ${formatMoney(analytics.fNetPnlThisMonth)} on Grade F trades this month. Without F trades your month sits at ${formatMoney(monthWithoutF)}.`,
+      metrics: [
+        ["F Trades", String(analytics.fTradesThisMonth)],
+        ["Net from F", formatMoney(analytics.fNetPnlThisMonth)],
+        ["Without F", formatMoney(monthWithoutF)],
+      ],
+    },
+    {
+      kicker: "Risk Discipline",
+      title: "F-Trade Volume Check",
+      text: `${analytics.fTradesThisMonth} Grade F trades this month, average losing F trade: ${formatMoney(analytics.fAvgLossPerTradeThisMonth)}.`,
+      metrics: [
+        ["F Count", String(analytics.fTradesThisMonth)],
+        ["Avg Loss/F", formatMoney(analytics.fAvgLossPerTradeThisMonth)],
+        ["Loss Share", `${analytics.fLossContributionPct.toFixed(1)}%`],
+      ],
+    },
+    {
+      kicker: "Sessions/Timing",
+      title: "Session Edge",
+      text: `NY expectancy is ${formatMoney(analytics.sessionExpectancy.NY || 0)} vs London ${formatMoney(analytics.sessionExpectancy.London || 0)} (${formatMoney(nyEdge)} difference).`,
+      metrics: [
+        ["NY Exp", formatMoney(analytics.sessionExpectancy.NY || 0)],
+        ["LDN Exp", formatMoney(analytics.sessionExpectancy.London || 0)],
+        ["Delta", formatMoney(nyEdge)],
+      ],
+    },
+    {
+      kicker: "Confluence",
+      title: "Confluence Quality",
+      text: `Full confluence win rate is ${analytics.fullConfluenceWinRate.toFixed(1)}% vs hard invalidation ${analytics.hardInvalidationWinRate.toFixed(1)}%.`,
+      metrics: [
+        ["Full Win%", `${analytics.fullConfluenceWinRate.toFixed(1)}%`],
+        ["Hard Win%", `${analytics.hardInvalidationWinRate.toFixed(1)}%`],
+        ["Gap", `${fullVsHardWinGap.toFixed(1)} pts`],
+      ],
+    },
+    {
+      kicker: "Behavior",
+      title: "Execution Proof",
+      text: `Trades with after-screenshot average ${formatMoney(analytics.withAfterAvgPnl)} vs ${formatMoney(analytics.withoutAfterAvgPnl)} without (${formatMoney(afterDelta)} delta).`,
+      metrics: [
+        ["With After", formatMoney(analytics.withAfterAvgPnl)],
+        ["Without", formatMoney(analytics.withoutAfterAvgPnl)],
+        ["Delta", formatMoney(afterDelta)],
+      ],
+    },
+    {
+      kicker: "Market/Execution",
+      title: "Size Discipline",
+      text: `Lot sizes above 0.10 average ${formatMoney(analytics.highLotAvgPnl)} per trade vs baseline ${formatMoney(analytics.baselineLotAvgPnl)}.`,
+      metrics: [
+        [">0.10", formatMoney(analytics.highLotAvgPnl)],
+        ["Baseline", formatMoney(analytics.baselineLotAvgPnl)],
+        ["Delta", formatMoney(sizeDelta)],
+      ],
+    },
+    {
+      kicker: "Market/Execution",
+      title: "Pair Leaderboard",
+      text: `Best pair by net PnL is ${analytics.bestPairByPnl.key} at ${formatMoney(analytics.bestPairByPnl.value)}.`,
+      metrics: [
+        ["Best Pair", analytics.bestPairByPnl.key],
+        ["Net", formatMoney(analytics.bestPairByPnl.value)],
+        ["Win Rate", `${analytics.bestPairByWinRate.value.toFixed(1)}%`],
+      ],
+    },
+    {
+      kicker: "Market/Execution",
+      title: "Pair Weak Spot",
+      text: `Weakest pair by net PnL is ${analytics.worstPairByPnl.key} at ${formatMoney(analytics.worstPairByPnl.value)}.`,
+      metrics: [
+        ["Weak Pair", analytics.worstPairByPnl.key],
+        ["Net", formatMoney(analytics.worstPairByPnl.value)],
+        ["Best Exp", formatMoney(analytics.bestPairByExpectancy.value)],
+      ],
+    },
+    {
+      kicker: "Sessions/Timing",
+      title: "Best Session",
+      text: `Top session by expectancy is ${analytics.bestSessionByExpectancy.key} at ${formatMoney(analytics.bestSessionByExpectancy.value)} per closed trade.`,
+      metrics: [
+        ["Best", analytics.bestSessionByExpectancy.key],
+        ["Expectancy", formatMoney(analytics.bestSessionByExpectancy.value)],
+        ["Worst Exp", formatMoney(analytics.worstSessionByExpectancy.value)],
+      ],
+    },
+    {
+      kicker: "Risk",
+      title: "Drawdown Pulse",
+      text: `Current drawdown is ${formatMoney(-analytics.currentDrawdown)} against max drawdown ${formatMoney(-analytics.maxDrawdown)}.`,
+      metrics: [
+        ["Current DD", formatMoney(-analytics.currentDrawdown)],
+        ["Max DD", formatMoney(-analytics.maxDrawdown)],
+        ["Duration", `${analytics.longestDrawdownDuration} trades`],
+      ],
+    },
+    {
+      kicker: "Risk",
+      title: "Open Trade Risk",
+      text: `${analytics.openAging.over24h} open trades are older than 24h (avg age ${analytics.openAging.avgHours.toFixed(1)}h).`,
+      metrics: [
+        ["Open", String(analytics.openAging.count)],
+        [">24h", String(analytics.openAging.over24h)],
+        ["Avg Age", `${analytics.openAging.avgHours.toFixed(1)}h`],
+      ],
+    },
+    {
+      kicker: "Confluence",
+      title: "Strategy Mix",
+      text: secondaryStrategy
+        ? `${primaryStrategy} net is ${formatMoney(primaryNet)} and ${secondaryStrategy} net is ${formatMoney(secondaryNet)}.`
+        : `${primaryStrategy} net is ${formatMoney(primaryNet)} across ${analytics.strategyCounts?.[primaryStrategy] || 0} trades.`,
+      metrics: [
+        [`${primaryStrategy} Net`, formatMoney(primaryNet)],
+        [secondaryStrategy ? `${secondaryStrategy} Net` : "Total Strategies", secondaryStrategy ? formatMoney(secondaryNet) : String(Object.keys(analytics.strategyCounts || {}).length)],
+        ["Mix", formatStrategyMixLine(analytics, 2)],
+      ],
+    },
+    {
+      kicker: "Confluence",
+      title: "Strategy Win Quality",
+      text: secondaryStrategy
+        ? `${primaryStrategy} win rate ${primaryWin.toFixed(1)}% vs ${secondaryStrategy} ${secondaryWin.toFixed(1)}%.`
+        : `${primaryStrategy} win rate is ${primaryWin.toFixed(1)}%.`,
+      metrics: [
+        [`${primaryStrategy} Win%`, `${primaryWin.toFixed(1)}%`],
+        [secondaryStrategy ? `${secondaryStrategy} Win%` : "Trades", secondaryStrategy ? `${secondaryWin.toFixed(1)}%` : String(analytics.strategyCounts?.[primaryStrategy] || 0)],
+        ["Delta", secondaryStrategy ? `${strategyWinDelta.toFixed(1)} pts` : "N/A"],
+      ],
+    },
+    {
+      kicker: "Confluence",
+      title: "Grade Spread",
+      text: `Grade A average PnL is ${formatMoney(analytics.gradeVsPnl.A)} while Grade F averages ${formatMoney(analytics.gradeVsPnl.F)}.`,
+      metrics: [
+        ["Grade A Avg", formatMoney(analytics.gradeVsPnl.A)],
+        ["Grade F Avg", formatMoney(analytics.gradeVsPnl.F)],
+        ["Grade A Share", `${analytics.gradeAShare.toFixed(1)}%`],
+      ],
+    },
+    {
+      kicker: "Sessions/Timing",
+      title: "Time-to-Close Pattern",
+      text: `Most common close time bucket: ${analytics.dominantTimeToCloseBucket.key} (${analytics.dominantTimeToCloseBucket.value} trades).`,
+      metrics: [
+        ["Top Bucket", analytics.dominantTimeToCloseBucket.key],
+        ["Trades", String(analytics.dominantTimeToCloseBucket.value)],
+        ["Best Day", `${analytics.bestDayByPnl.name} ${formatMoney(analytics.bestDayByPnl.value)}`],
+      ],
+    },
+    {
+      kicker: "Sessions/Timing",
+      title: "Best Hour",
+      text: `Best expectancy hour is ${analytics.bestHourByExpectancy}:00 at ${formatMoney(analytics.bestHourExpectancyValue)}.`,
+      metrics: [
+        ["Best Hour", `${analytics.bestHourByExpectancy}:00`],
+        ["Expectancy", formatMoney(analytics.bestHourExpectancyValue)],
+        ["Busiest", `${analytics.busiestHour}:00`],
+      ],
+    },
+    {
+      kicker: "Sessions/Timing",
+      title: "Peak Activity",
+      text: `Busiest trading hour is ${analytics.busiestHour}:00 with ${analytics.busiestHourCount} trades.`,
+      metrics: [
+        ["Busiest Hour", `${analytics.busiestHour}:00`],
+        ["Trades", String(analytics.busiestHourCount)],
+        ["Session Share", `${analytics.bestSessionByShare.sharePct.toFixed(1)}% ${analytics.bestSessionByShare.key}`],
+      ],
+    },
+    {
+      kicker: "Performance",
+      title: "Core Performance",
+      text: `Profit factor is ${analytics.profitFactor == null ? "-" : analytics.profitFactor.toFixed(2)} with expectancy ${formatMoney(analytics.expectancy)} per closed trade.`,
+      metrics: [
+        ["Profit Factor", analytics.profitFactor == null ? "-" : analytics.profitFactor.toFixed(2)],
+        ["Expectancy", formatMoney(analytics.expectancy)],
+        ["Win Rate", `${analytics.winRate.toFixed(1)}%`],
+      ],
+    },
+    {
+      kicker: "Risk",
+      title: "Momentum Pattern",
+      text: `Max win streak is ${analytics.maxWinStreak} while max loss streak is ${analytics.maxLossStreak}.`,
+      metrics: [
+        ["Win Streak", String(analytics.maxWinStreak)],
+        ["Loss Streak", String(analytics.maxLossStreak)],
+        ["Recovery", analytics.recoveryFactor == null ? "-" : analytics.recoveryFactor.toFixed(2)],
+      ],
+    },
+    {
+      kicker: "Confluence",
+      title: "Required Rule Leak",
+      text: `Most missed required confluence this month: ${analytics.topMissingRequiredConfluenceFMonth || "None"} (${analytics.topMissingRequiredConfluenceFMonthCount} misses).`,
+      metrics: [
+        ["Top Missing", analytics.topMissingRequiredConfluenceFMonth || "None"],
+        ["Count", String(analytics.topMissingRequiredConfluenceFMonthCount)],
+        ["Hard Share", `${analytics.hardIntegrityShare.toFixed(1)}%`],
+      ],
+    },
+  ];
+}
+
+function renderAnalyticsVisuals(tab, analytics) {
+  const visualsEl = document.getElementById("analyticsVisuals");
+  const tablesEl = document.getElementById("analyticsTables");
+  if (!visualsEl || !tablesEl) {
+    return;
+  }
+
+  const noTable = '<div class="muted-empty" style="padding:0.55rem;">No detail table for this tab.</div>';
+
+  if (tab === "performance") {
+    visualsEl.innerHTML = `
+      <article class="chart-card">
+        <h3>Outcome Distribution</h3>
+        <div class="chart-wrap"><canvas id="chart-outcomes"></canvas></div>
+      </article>
+      <article class="chart-card">
+        <h3>Net vs Gross</h3>
+        <div class="chart-wrap"><canvas id="chart-net-gross"></canvas></div>
+      </article>
+    `;
+    tablesEl.innerHTML = noTable;
+
+    createChart("chart-outcomes", {
+      type: "doughnut",
+      data: {
+        labels: Object.keys(analytics.outcomeCounts),
+        datasets: [
+          {
+            data: Object.values(analytics.outcomeCounts),
+            backgroundColor: ["#1f9d71", "#7b61ff", "#b18cff", "#d44e75", "#d6a03a"],
+            borderWidth: 0,
+          },
+        ],
+      },
+      options: chartOptions(),
+    });
+
+    createChart("chart-net-gross", {
+      type: "bar",
+      data: {
+        labels: ["Net", "Gross Profit", "Gross Loss"],
+        datasets: [
+          {
+            label: "USD",
+            data: [analytics.netPnl, analytics.grossProfit, -analytics.grossLossAbs],
+            backgroundColor: ["#6247e8", "#1f9d71", "#d44e75"],
+            borderRadius: 8,
+          },
+        ],
+      },
+      options: chartOptions(true),
+    });
+    return;
+  }
+
+  if (tab === "risk") {
+    visualsEl.innerHTML = `
+      <article class="chart-card chart-span">
+        <h3>Equity and Drawdown Curves</h3>
+        <div class="chart-wrap"><canvas id="chart-risk-curves"></canvas></div>
+      </article>
+    `;
+    tablesEl.innerHTML = noTable;
+
+    createChart("chart-risk-curves", {
+      type: "line",
+      data: {
+        labels: analytics.equityCurve.map((_, index) => String(index + 1)),
+        datasets: [
+          {
+            label: "Equity",
+            data: analytics.equityCurve,
+            borderColor: "#6247e8",
+            backgroundColor: "rgba(98, 71, 232, 0.1)",
+            tension: 0.25,
+            fill: false,
+            pointRadius: 0,
+          },
+          {
+            label: "Drawdown",
+            data: analytics.drawdownCurve,
+            borderColor: "#d44e75",
+            backgroundColor: "rgba(212, 78, 117, 0.08)",
+            tension: 0.25,
+            fill: false,
+            pointRadius: 0,
+          },
+        ],
+      },
+      options: chartOptions(true),
+    });
+    return;
+  }
+
+  if (tab === "confluence") {
+    visualsEl.innerHTML = `
+      <article class="chart-card">
+        <h3>Integrity Distribution</h3>
+        <div class="chart-wrap"><canvas id="chart-integrity"></canvas></div>
+      </article>
+      <article class="chart-card">
+        <h3>Grade Distribution</h3>
+        <div class="chart-wrap"><canvas id="chart-grade"></canvas></div>
+      </article>
+      <article class="chart-card chart-span">
+        <h3>Confluence Compliance Trend (Weekly Full %)</h3>
+        <div class="chart-wrap"><canvas id="chart-compliance"></canvas></div>
+      </article>
+    `;
+
+    const scoreRows = Object.entries(analytics.scoreCounts)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([score, count]) => [score, String(count)]);
+    const integrityPerfRows = INTEGRITY_ORDER.map((key) => [integrityLabel(key), formatMoney(analytics.integrityPerformance[key] || 0)]);
+    const gradeVsPnlRows = ["A", "B", "C", "F"].map((grade) => [grade, formatMoney(analytics.gradeVsPnl[grade] || 0)]);
+
+    tablesEl.innerHTML = `
+      ${renderKeyValueTable("Confluence Score Distribution", scoreRows, ["Score", "Trades"])}
+      ${renderKeyValueTable(
+        "Missing Confluences (Overall)",
+        Object.entries(analytics.missingOverall).map(([key, value]) => [key, String(value)]),
+        ["Confluence", "Missing Count"]
+      )}
+      ${renderKeyValueTable(
+        "Missing Required Confluences",
+        Object.entries(analytics.missingRequired).map(([key, value]) => [key, String(value)]),
+        ["Confluence", "Missing Count"]
+      )}
+      ${renderKeyValueTable(
+        "Missing Quality Confluences",
+        Object.entries(analytics.missingQuality).map(([key, value]) => [key, String(value)]),
+        ["Confluence", "Missing Count"]
+      )}
+      ${renderKeyValueTable("Integrity Performance (Net PnL)", integrityPerfRows, ["Integrity", "Net PnL"])}
+      ${renderKeyValueTable("Grade vs Avg PnL", gradeVsPnlRows, ["Grade", "Avg PnL"])}
+    `;
+
+    createChart("chart-integrity", {
+      type: "bar",
+      data: {
+        labels: INTEGRITY_ORDER.map((key) => integrityLabel(key)),
+        datasets: [
+          {
+            data: INTEGRITY_ORDER.map((key) => analytics.integrityCounts[key] || 0),
+            backgroundColor: ["#1f9d71", "#7b61ff", "#d6a03a", "#d44e75"],
+            borderRadius: 8,
+          },
+        ],
+      },
+      options: chartOptions(),
+    });
+
+    createChart("chart-grade", {
+      type: "bar",
+      data: {
+        labels: ["A", "B", "C", "F"],
+        datasets: [
+          {
+            data: ["A", "B", "C", "F"].map((grade) => analytics.gradeCounts[grade] || 0),
+            backgroundColor: ["#1f9d71", "#7b61ff", "#d6a03a", "#d44e75"],
+            borderRadius: 8,
+          },
+        ],
+      },
+      options: chartOptions(),
+    });
+
+    createChart("chart-compliance", {
+      type: "line",
+      data: {
+        labels: analytics.complianceTrend.labels,
+        datasets: [
+          {
+            label: "Full Confluence %",
+            data: analytics.complianceTrend.values,
+            borderColor: "#6247e8",
+            backgroundColor: "rgba(98, 71, 232, 0.12)",
+            tension: 0.3,
+            fill: true,
+            pointRadius: 3,
+          },
+        ],
+      },
+      options: chartOptions(),
+    });
+    return;
+  }
+
+  if (tab === "sessions") {
+    visualsEl.innerHTML = `
+      <article class="chart-card">
+        <h3>Session Net PnL</h3>
+        <div class="chart-wrap"><canvas id="chart-session-pnl"></canvas></div>
+      </article>
+      <article class="chart-card">
+        <h3>Hour-of-Day Frequency</h3>
+        <div class="chart-wrap"><canvas id="chart-hour-freq"></canvas></div>
+      </article>
+      <article class="chart-card chart-span">
+        <h3>Day-of-Week Performance</h3>
+        <div class="chart-wrap"><canvas id="chart-day-performance"></canvas></div>
+      </article>
+    `;
+
+    const sessionSummaryRows = SESSION_OPTIONS.map((session) => [
+      session,
+      `${analytics.totalTrades ? ((analytics.sessionMix[session] / analytics.totalTrades) * 100).toFixed(1) : "0.0"}%`,
+      formatMoney(analytics.sessionNetPnl[session] || 0),
+      `${(analytics.sessionWinRate[session] || 0).toFixed(1)}%`,
+      formatMoney(analytics.sessionExpectancy[session] || 0),
+    ]);
+
+    const hourExpectancyRows = analytics.hourExpectancy
+      .map((value, hour) => [String(hour).padStart(2, "0"), value])
+      .filter(([, value]) => Number.isFinite(value) && value !== 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([hour, value]) => [`${hour}:00`, formatMoney(value)]);
+
+    tablesEl.innerHTML = `
+      ${renderCustomTable("Session Summary", ["Session", "Share", "Net PnL", "Win Rate", "Expectancy"], sessionSummaryRows)}
+      ${renderKeyValueTable("Hour-of-Day Expectancy (Top)", hourExpectancyRows, ["Hour", "Expectancy"])}
+      ${renderMatrixTable("Session x Strategy (Net PnL)", analytics.sessionByStrategyMatrix.rows, analytics.sessionByStrategyMatrix.cols, analytics.sessionByStrategyMatrix.values, true)}
+      ${renderMatrixTable("Session x Pair (Net PnL)", analytics.sessionByPairMatrix.rows, analytics.sessionByPairMatrix.cols, analytics.sessionByPairMatrix.values, true)}
+      ${renderKeyValueTable("Time-to-Close Buckets", Object.entries(analytics.timeToCloseBuckets), ["Bucket", "Trades"])}
+    `;
+
+    createChart("chart-session-pnl", {
+      type: "bar",
+      data: {
+        labels: SESSION_OPTIONS,
+        datasets: [
+          {
+            data: SESSION_OPTIONS.map((session) => analytics.sessionNetPnl[session] || 0),
+            backgroundColor: ["#6247e8", "#1f9d71", "#d6a03a"],
+            borderRadius: 8,
+          },
+        ],
+      },
+      options: chartOptions(true),
+    });
+
+    createChart("chart-hour-freq", {
+      type: "line",
+      data: {
+        labels: analytics.hourFrequency.map((_, hour) => String(hour).padStart(2, "0")),
+        datasets: [
+          {
+            label: "Trades",
+            data: analytics.hourFrequency,
+            borderColor: "#6247e8",
+            backgroundColor: "rgba(98, 71, 232, 0.08)",
+            tension: 0.25,
+            fill: true,
+            pointRadius: 0,
+          },
+        ],
+      },
+      options: chartOptions(),
+    });
+
+    createChart("chart-day-performance", {
+      type: "bar",
+      data: {
+        labels: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+        datasets: [
+          {
+            data: analytics.dayPerformance,
+            backgroundColor: analytics.dayPerformance.map((value) => (value >= 0 ? "#1f9d71" : "#d44e75")),
+            borderRadius: 8,
+          },
+        ],
+      },
+      options: chartOptions(true),
+    });
+    return;
+  }
+
+  if (tab === "market") {
+    visualsEl.innerHTML = `
+      <article class="chart-card">
+        <h3>Pair Net PnL</h3>
+        <div class="chart-wrap"><canvas id="chart-pair-pnl"></canvas></div>
+      </article>
+      <article class="chart-card">
+        <h3>Direction Split PnL</h3>
+        <div class="chart-wrap"><canvas id="chart-direction"></canvas></div>
+      </article>
+      <article class="chart-card chart-span">
+        <h3>Lot Size vs PnL</h3>
+        <div class="chart-wrap"><canvas id="chart-lot-scatter"></canvas></div>
+      </article>
+    `;
+
+    const directionRows = ["Buy", "Sell"].map((direction) => [
+      direction,
+      formatMoney(analytics.directionPnl[direction] || 0),
+      `${(analytics.directionWinRate[direction] || 0).toFixed(1)}%`,
+    ]);
+
+    const lotBucketRows = [...analytics.lotBucketExpectancy]
+      .sort((a, b) => a.bucket.localeCompare(b.bucket))
+      .map((entry) => [entry.bucket, formatMoney(entry.expectancy)]);
+
+    tablesEl.innerHTML = `
+      ${renderKeyValueTable(
+        "Pair Win Rate Ranking",
+        analytics.pairWinRateRanking.map((item) => [item.pair, `${item.winRate.toFixed(1)}%`]),
+        ["Pair", "Win Rate"]
+      )}
+      ${renderKeyValueTable(
+        "Pair Expectancy Ranking",
+        analytics.pairExpectancyRanking.map((item) => [item.pair, formatMoney(item.expectancy)]),
+        ["Pair", "Expectancy"]
+      )}
+      ${renderKeyValueTable(
+        "Open Trade Aging",
+        [
+          ["Open Trades", String(analytics.openAging.count)],
+          ["Average Age", `${analytics.openAging.avgHours.toFixed(1)}h`],
+          ["Max Age", `${analytics.openAging.maxHours.toFixed(1)}h`],
+          [">24h", String(analytics.openAging.over24h)],
+        ],
+        ["Metric", "Value"]
+      )}
+      ${renderCustomTable("Direction Split", ["Direction", "Net PnL", "Win Rate"], directionRows)}
+      ${renderKeyValueTable("Lot Bucket Expectancy", lotBucketRows, ["Lot Bucket", "Expectancy"])}
+    `;
+
+    createChart("chart-pair-pnl", {
+      type: "bar",
+      data: {
+        labels: analytics.pairPnlRanking.map((entry) => entry.pair),
+        datasets: [
+          {
+            data: analytics.pairPnlRanking.map((entry) => entry.pnl),
+            backgroundColor: analytics.pairPnlRanking.map((entry) => (entry.pnl >= 0 ? "#1f9d71" : "#d44e75")),
+            borderRadius: 8,
+          },
+        ],
+      },
+      options: chartOptions(true),
+    });
+
+    createChart("chart-direction", {
+      type: "bar",
+      data: {
+        labels: ["Buy", "Sell"],
+        datasets: [
+          {
+            data: [analytics.directionPnl.Buy || 0, analytics.directionPnl.Sell || 0],
+            backgroundColor: ["#6247e8", "#b18cff"],
+            borderRadius: 8,
+          },
+        ],
+      },
+      options: chartOptions(true),
+    });
+
+    createChart("chart-lot-scatter", {
+      type: "scatter",
+      data: {
+        datasets: [
+          {
+            label: "Trades",
+            data: analytics.lotScatter,
+            pointBackgroundColor: analytics.lotScatter.map((point) => (point.y >= 0 ? "#1f9d71" : "#d44e75")),
+            pointRadius: 4,
+          },
+        ],
+      },
+      options: chartOptions(true),
+    });
+    return;
+  }
+
+  visualsEl.innerHTML = `
+    <article class="chart-card">
+      <h3>Image Presence</h3>
+      <div class="chart-wrap"><canvas id="chart-images"></canvas></div>
+    </article>
+    <article class="chart-card">
+      <h3>Note Usage</h3>
+      <div class="chart-wrap"><canvas id="chart-notes"></canvas></div>
+    </article>
+    <article class="chart-card chart-span">
+      <h3>Edit Count Distribution</h3>
+      <div class="chart-wrap"><canvas id="chart-edits"></canvas></div>
+    </article>
+  `;
+
+  tablesEl.innerHTML = renderKeyValueTable(
+    "Behavior Summary",
+    [
+      ["Image Completeness", `${analytics.imageCompletenessRate.toFixed(1)}%`],
+      ["Before Presence", `${analytics.beforePresenceRate.toFixed(1)}%`],
+      ["After Presence", `${analytics.afterPresenceRate.toFixed(1)}%`],
+      ["Notes Used", `${analytics.noteUsageRate.toFixed(1)}%`],
+      ["Median Note Length", `${analytics.medianNoteLength.toFixed(0)} chars`],
+      ["Avg Edit Count", analytics.avgEditCount.toFixed(2)],
+      ["Max Edit Count", String(analytics.maxEditCount)],
+    ],
+    ["Metric", "Value"]
+  );
+
+  createChart("chart-images", {
+    type: "doughnut",
+    data: {
+      labels: ["Both", "Before only", "After only", "None"],
+      datasets: [
+        {
+          data: analytics.imageBuckets,
+          backgroundColor: ["#1f9d71", "#6247e8", "#b18cff", "#d44e75"],
+          borderWidth: 0,
+        },
+      ],
+    },
+    options: chartOptions(),
+  });
+
+  createChart("chart-notes", {
+    type: "bar",
+    data: {
+      labels: ["With Note", "Without Note"],
+      datasets: [
+        {
+          data: [analytics.notesUsedCount, analytics.totalTrades - analytics.notesUsedCount],
+          backgroundColor: ["#6247e8", "#d6a03a"],
+          borderRadius: 8,
+        },
+      ],
+    },
+    options: chartOptions(),
+  });
+
+  createChart("chart-edits", {
+    type: "bar",
+    data: {
+      labels: Object.keys(analytics.editCountDistribution),
+      datasets: [
+        {
+          data: Object.values(analytics.editCountDistribution),
+          backgroundColor: "#7b61ff",
+          borderRadius: 8,
+        },
+      ],
+    },
+    options: chartOptions(),
+  });
+}
+
+function destroyCharts() {
+  chartRegistry.forEach((chart) => chart.destroy());
+  chartRegistry.clear();
+}
+
+function renderKeyValueTable(title, rows, headers = ["Key", "Value"]) {
+  const body = rows
+    .map(([key, value]) => `<tr><td>${escapeHtml(String(key))}</td><td>${escapeHtml(String(value))}</td></tr>`)
+    .join("");
+
+  return `
+    <div class="table-wrap" style="margin-bottom:0.45rem;">
+      <table class="insight-table">
+        <thead>
+          <tr><th colspan="2">${escapeHtml(title)}</th></tr>
+          <tr><th>${escapeHtml(headers[0])}</th><th>${escapeHtml(headers[1])}</th></tr>
+        </thead>
+        <tbody>${body || '<tr><td colspan="2" class="muted-empty">No data</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderMatrixTable(title, rows, cols, matrix, money = false) {
+  const head = cols.map((col) => `<th>${escapeHtml(col)}</th>`).join("");
+  const body = rows
+    .map((rowLabel, rowIndex) => {
+      const cells = cols
+        .map((_, colIndex) => {
+          const value = matrix[rowIndex]?.[colIndex] ?? 0;
+          return `<td>${escapeHtml(money ? formatMoney(value) : String(value))}</td>`;
+        })
+        .join("");
+      return `<tr><th>${escapeHtml(rowLabel)}</th>${cells}</tr>`;
+    })
+    .join("");
+
+  return `
+    <div class="table-wrap" style="margin-bottom:0.45rem;">
+      <table class="insight-table">
+        <thead>
+          <tr><th colspan="${cols.length + 1}">${escapeHtml(title)}</th></tr>
+          <tr><th>Row</th>${head}</tr>
+        </thead>
+        <tbody>${body || '<tr><td colspan="99" class="muted-empty">No data</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderCustomTable(title, headers, rows) {
+  const head = headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
+  const body = rows
+    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(String(cell))}</td>`).join("")}</tr>`)
+    .join("");
+
+  return `
+    <div class="table-wrap" style="margin-bottom:0.45rem;">
+      <table class="insight-table">
+        <thead>
+          <tr><th colspan="${headers.length}">${escapeHtml(title)}</th></tr>
+          <tr>${head}</tr>
+        </thead>
+        <tbody>${body || `<tr><td colspan="${headers.length}" class="muted-empty">No data</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function formatMetricValue(key, analytics) {
+  switch (key) {
+    case "total_trades":
+      return String(analytics.totalTrades);
+    case "closed_trades":
+      return String(analytics.closedTrades);
+    case "open_trades":
+      return String(analytics.openTrades);
+    case "net_pnl":
+      return formatMoney(analytics.netPnl);
+    case "gross_profit":
+      return formatMoney(analytics.grossProfit);
+    case "gross_loss":
+      return formatMoney(-analytics.grossLossAbs);
+    case "win_rate":
+      return `${analytics.winRate.toFixed(1)}%`;
+    case "loss_rate":
+      return `${analytics.lossRate.toFixed(1)}%`;
+    case "breakeven_rate":
+      return `${analytics.breakevenRate.toFixed(1)}%`;
+    case "profit_factor":
+      return analytics.profitFactor == null ? "-" : analytics.profitFactor.toFixed(2);
+    case "expectancy_per_trade":
+      return formatMoney(analytics.expectancy);
+    case "average_win":
+      return formatMoney(analytics.avgWin);
+    case "average_loss":
+      return formatMoney(analytics.avgLoss);
+    case "win_loss_size_ratio":
+      return analytics.winLossRatio == null ? "-" : analytics.winLossRatio.toFixed(2);
+    case "outcome_distribution":
+      return "Chart below";
+    case "equity_curve":
+      return `${analytics.equityCurve.length} points`;
+    case "drawdown_curve":
+      return `${analytics.drawdownCurve.length} points`;
+    case "max_drawdown":
+      return formatMoney(-analytics.maxDrawdown);
+    case "current_drawdown":
+      return formatMoney(-analytics.currentDrawdown);
+    case "longest_drawdown_duration":
+      return `${analytics.longestDrawdownDuration} trades`;
+    case "best_trade":
+      return formatMoney(analytics.bestTrade);
+    case "worst_trade":
+      return formatMoney(analytics.worstTrade);
+    case "max_win_streak":
+      return String(analytics.maxWinStreak);
+    case "max_loss_streak":
+      return String(analytics.maxLossStreak);
+    case "recovery_factor":
+      return analytics.recoveryFactor == null ? "-" : analytics.recoveryFactor.toFixed(2);
+    case "strategy_mix":
+      return formatStrategyMixLine(analytics);
+    case "strategy_net_pnl":
+      return formatStrategyNetLine(analytics, formatMoney);
+    case "strategy_win_rate":
+      return formatStrategyWinLine(analytics);
+    case "confluence_score_distribution":
+      return analytics.topConfluenceScore.key ? `${analytics.topConfluenceScore.key} (${analytics.topConfluenceScore.value} trades)` : "No score data";
+    case "setup_integrity_distribution":
+      return `Full ${analytics.fullIntegrityShare.toFixed(1)}% | Hard ${analytics.hardIntegrityShare.toFixed(1)}%`;
+    case "setup_grade_distribution":
+      return `A ${analytics.gradeAShare.toFixed(1)}% | F ${analytics.gradeFShare.toFixed(1)}%`;
+    case "missing_confluence_frequency_overall":
+      return analytics.topMissingOverall.key ? `${analytics.topMissingOverall.key} (${analytics.topMissingOverall.value})` : "No missing confluence";
+    case "missing_required_frequency":
+      return analytics.topMissingRequired.key ? `${analytics.topMissingRequired.key} (${analytics.topMissingRequired.value})` : "No required misses";
+    case "missing_quality_frequency":
+      return analytics.topMissingQuality.key ? `${analytics.topMissingQuality.key} (${analytics.topMissingQuality.value})` : "No quality misses";
+    case "full_soft_hard_performance":
+      return `Full ${formatMoney(analytics.integrityPerformance.full_confluence || 0)} | Hard ${formatMoney(analytics.integrityPerformance.hard_invalidation_present || 0)}`;
+    case "confluence_compliance_trend":
+      return analytics.latestCompliancePct == null ? "No weekly trend" : `Latest week ${analytics.latestCompliancePct.toFixed(1)}% full`;
+    case "grade_vs_pnl_distribution":
+      return `A ${formatMoney(analytics.gradeVsPnl.A)} | F ${formatMoney(analytics.gradeVsPnl.F)}`;
+    case "session_mix_share":
+      return `${analytics.bestSessionByShare.key} ${analytics.bestSessionByShare.sharePct.toFixed(1)}% share`;
+    case "session_net_pnl":
+      return `${analytics.bestSessionByNet.key} ${formatMoney(analytics.bestSessionByNet.value)}`;
+    case "session_win_rate":
+      return `${analytics.bestSessionByWinRate.key} ${analytics.bestSessionByWinRate.value.toFixed(1)}%`;
+    case "session_expectancy":
+      return `${analytics.bestSessionByExpectancy.key} ${formatMoney(analytics.bestSessionByExpectancy.value)}`;
+    case "session_x_strategy_heatmap":
+      return `${analytics.hottestSessionStrategyCell.row} x ${analytics.hottestSessionStrategyCell.col}: ${formatMoney(analytics.hottestSessionStrategyCell.value)}`;
+    case "session_x_pair_heatmap":
+      return `${analytics.hottestSessionPairCell.row} x ${analytics.hottestSessionPairCell.col}: ${formatMoney(analytics.hottestSessionPairCell.value)}`;
+    case "hour_trade_frequency":
+      return `${analytics.busiestHour}:00 (${analytics.busiestHourCount} trades)`;
+    case "hour_expectancy":
+      return `${analytics.bestHourByExpectancy}:00 (${formatMoney(analytics.bestHourExpectancyValue)})`;
+    case "day_of_week_performance":
+      return `${analytics.bestDayByPnl.name} ${formatMoney(analytics.bestDayByPnl.value)}`;
+    case "time_to_close_distribution":
+      return `${analytics.dominantTimeToCloseBucket.key} (${analytics.dominantTimeToCloseBucket.value} trades)`;
+    case "pair_pnl_ranking":
+      return `${analytics.bestPairByPnl.key} ${formatMoney(analytics.bestPairByPnl.value)}`;
+    case "pair_win_rate_ranking":
+      return `${analytics.bestPairByWinRate.key} ${analytics.bestPairByWinRate.value.toFixed(1)}%`;
+    case "pair_expectancy_ranking":
+      return `${analytics.bestPairByExpectancy.key} ${formatMoney(analytics.bestPairByExpectancy.value)}`;
+    case "direction_split_pnl":
+      return `Buy ${formatMoney(analytics.directionPnl.Buy)} | Sell ${formatMoney(analytics.directionPnl.Sell)}`;
+    case "direction_split_win_rate":
+      return `Buy ${analytics.directionWinRate.Buy.toFixed(1)}% | Sell ${analytics.directionWinRate.Sell.toFixed(1)}%`;
+    case "lot_size_vs_pnl_scatter":
+      return `Corr ${analytics.lotPnlCorrelation == null ? "-" : analytics.lotPnlCorrelation.toFixed(2)}`;
+    case "lot_size_bucket_expectancy":
+      return `${analytics.bestLotBucket.key} ${formatMoney(analytics.bestLotBucket.value)}`;
+    case "open_trade_aging":
+      return `avg ${analytics.openAging.avgHours.toFixed(1)}h | max ${analytics.openAging.maxHours.toFixed(1)}h`;
+    case "image_completeness_rate":
+      return `${analytics.imageCompletenessRate.toFixed(1)}%`;
+    case "before_presence_rate":
+      return `${analytics.beforePresenceRate.toFixed(1)}%`;
+    case "after_presence_rate":
+      return `${analytics.afterPresenceRate.toFixed(1)}%`;
+    case "note_usage_and_median_length":
+      return `${analytics.noteUsageRate.toFixed(1)}% used | median ${analytics.medianNoteLength.toFixed(0)} chars`;
+    case "edit_frequency_per_trade":
+      return `avg ${analytics.avgEditCount.toFixed(2)} | max ${analytics.maxEditCount}`;
+    default:
+      return "-";
+  }
+}
+
+function computeAnalytics(rows) {
+  const totalTrades = rows.length;
+  const closedRows = rows.filter((trade) => trade.status === "closed");
+  const openRows = rows.filter((trade) => trade.status === "open");
+  const pairUniverse = getPairUniverse(rows);
+
+  const pnlRows = closedRows.filter((trade) => Number.isFinite(trade.pnl));
+  const netPnl = sum(pnlRows.map((trade) => trade.pnl));
+  const grossProfit = sum(pnlRows.filter((trade) => trade.pnl > 0).map((trade) => trade.pnl));
+  const grossLossAbs = Math.abs(sum(pnlRows.filter((trade) => trade.pnl < 0).map((trade) => trade.pnl)));
+
+  const wins = closedRows.filter((trade) => trade.outcome === "Full Win").length;
+  const losses = closedRows.filter((trade) => trade.outcome === "Full Loss").length;
+  const breakevens = closedRows.filter((trade) => trade.outcome === "Breakeven" || trade.outcome === "Partial + BE").length;
+
+  const closedCount = closedRows.length;
+  const winRate = closedCount ? (wins / closedCount) * 100 : 0;
+  const lossRate = closedCount ? (losses / closedCount) * 100 : 0;
+  const breakevenRate = closedCount ? (breakevens / closedCount) * 100 : 0;
+  const profitFactor = grossLossAbs > 0 ? grossProfit / grossLossAbs : null;
+  const expectancy = closedCount ? netPnl / closedCount : 0;
+
+  const winPnl = pnlRows.filter((trade) => trade.pnl > 0).map((trade) => trade.pnl);
+  const lossPnl = pnlRows.filter((trade) => trade.pnl < 0).map((trade) => trade.pnl);
+  const avgWin = winPnl.length ? sum(winPnl) / winPnl.length : 0;
+  const avgLoss = lossPnl.length ? sum(lossPnl) / lossPnl.length : 0;
+  const winLossRatio = avgLoss !== 0 ? Math.abs(avgWin / avgLoss) : null;
+
+  const outcomeCounts = {
+    "Full Win": 0,
+    "Partial + BE": 0,
+    Breakeven: 0,
+    "Full Loss": 0,
+    Open: 0,
+  };
+  rows.forEach((trade) => {
+    const key = trade.outcome || "Open";
+    if (outcomeCounts[key] == null) {
+      outcomeCounts[key] = 0;
+    }
+    outcomeCounts[key] += 1;
+  });
+
+  const orderedPnlRows = [...pnlRows].sort((a, b) => toMillis(a.captured_at_utc) - toMillis(b.captured_at_utc));
+  const equityCurve = [];
+  const drawdownCurve = [];
+  let runningEquity = 0;
+  let peak = 0;
+  let maxDrawdown = 0;
+  let longestDrawdownDuration = 0;
+  let currentDrawdownSpan = 0;
+
+  orderedPnlRows.forEach((trade) => {
+    runningEquity += trade.pnl;
+    equityCurve.push(runningEquity);
+
+    peak = Math.max(peak, runningEquity);
+    const drawdown = peak - runningEquity;
+    drawdownCurve.push(drawdown);
+
+    maxDrawdown = Math.max(maxDrawdown, drawdown);
+
+    if (drawdown > 0) {
+      currentDrawdownSpan += 1;
+      longestDrawdownDuration = Math.max(longestDrawdownDuration, currentDrawdownSpan);
+    } else {
+      currentDrawdownSpan = 0;
+    }
+  });
+
+  const currentDrawdown = drawdownCurve.length ? drawdownCurve[drawdownCurve.length - 1] : 0;
+  const bestTrade = pnlRows.length ? Math.max(...pnlRows.map((trade) => trade.pnl)) : 0;
+  const worstTrade = pnlRows.length ? Math.min(...pnlRows.map((trade) => trade.pnl)) : 0;
+  const { maxWinStreak, maxLossStreak } = streaksFromRows(orderedPnlRows);
+  const recoveryFactor = maxDrawdown > 0 ? netPnl / maxDrawdown : null;
+  const strategyUniverse = getStrategyUniverse({ rows, includeTradeStrategies: true });
+  const strategyCounts = Object.fromEntries(strategyUniverse.map((strategy) => [strategy, 0]));
+  const strategyNetPnl = Object.fromEntries(strategyUniverse.map((strategy) => [strategy, 0]));
+  const strategyClosed = Object.fromEntries(strategyUniverse.map((strategy) => [strategy, 0]));
+  const strategyWins = Object.fromEntries(strategyUniverse.map((strategy) => [strategy, 0]));
+
+  const scoreCounts = {};
+  const integrityCounts = {
+    full_confluence: 0,
+    one_soft_confluence_missing: 0,
+    multiple_soft_confluences_missing: 0,
+    hard_invalidation_present: 0,
+  };
+  const gradeCounts = { A: 0, B: 0, C: 0, F: 0 };
+
+  const missingOverall = {};
+  const missingRequired = {};
+  const missingQuality = {};
+  const integrityPerformance = {
+    full_confluence: 0,
+    one_soft_confluence_missing: 0,
+    multiple_soft_confluences_missing: 0,
+    hard_invalidation_present: 0,
+  };
+
+  const complianceByWeek = {};
+  const gradePnl = { A: [], B: [], C: [], F: [] };
+
+  rows.forEach((trade) => {
+    const strategy = normalizeStrategyName(trade.strategy);
+
+    if (strategy) {
+      if (!(strategy in strategyCounts)) {
+        strategyCounts[strategy] = 0;
+        strategyNetPnl[strategy] = 0;
+        strategyClosed[strategy] = 0;
+        strategyWins[strategy] = 0;
+      }
+      strategyCounts[strategy] += 1;
+      if (Number.isFinite(trade.pnl)) {
+        strategyNetPnl[strategy] += trade.pnl;
+      }
+      if (trade.status === "closed") {
+        strategyClosed[strategy] += 1;
+      }
+      if (trade.outcome === "Full Win") {
+        strategyWins[strategy] += 1;
+      }
+
+      scoreCounts[trade.confluence_score] = (scoreCounts[trade.confluence_score] || 0) + 1;
+      integrityCounts[trade.setup_integrity] = (integrityCounts[trade.setup_integrity] || 0) + 1;
+      gradeCounts[trade.setup_grade] = (gradeCounts[trade.setup_grade] || 0) + 1;
+
+      (trade.missing_confluences || []).forEach((item) => {
+        missingOverall[item] = (missingOverall[item] || 0) + 1;
+      });
+
+      const rules = getConfluenceRules(strategy);
+      (trade.missing_confluences || []).forEach((item) => {
+        if (rules.required.includes(item)) {
+          missingRequired[item] = (missingRequired[item] || 0) + 1;
+        }
+        if (rules.quality.includes(item)) {
+          missingQuality[item] = (missingQuality[item] || 0) + 1;
+        }
+      });
+
+      if (Number.isFinite(trade.pnl)) {
+        integrityPerformance[trade.setup_integrity] = (integrityPerformance[trade.setup_integrity] || 0) + trade.pnl;
+        if (!gradePnl[trade.setup_grade]) {
+          gradePnl[trade.setup_grade] = [];
+        }
+        gradePnl[trade.setup_grade].push(trade.pnl);
+      }
+
+      const week = getWeekKey(trade.captured_at_utc);
+      complianceByWeek[week] = complianceByWeek[week] || { full: 0, total: 0 };
+      complianceByWeek[week].total += 1;
+      if (trade.setup_integrity === "full_confluence") {
+        complianceByWeek[week].full += 1;
+      }
+    }
+  });
+
+  const strategyWinRate = {};
+  Object.keys(strategyCounts).forEach((strategy) => {
+    strategyWinRate[strategy] = strategyClosed[strategy] ? (strategyWins[strategy] / strategyClosed[strategy]) * 100 : 0;
+  });
+
+  const complianceTrendEntries = Object.entries(complianceByWeek).sort(([a], [b]) => a.localeCompare(b));
+  const complianceTrend = {
+    labels: complianceTrendEntries.map(([week]) => week),
+    values: complianceTrendEntries.map(([, bucket]) => (bucket.total ? (bucket.full / bucket.total) * 100 : 0)),
+  };
+
+  const gradeVsPnl = {
+    A: avg(gradePnl.A),
+    B: avg(gradePnl.B),
+    C: avg(gradePnl.C),
+    F: avg(gradePnl.F),
+  };
+
+  const sessionMix = Object.fromEntries(SESSION_OPTIONS.map((session) => [session, 0]));
+  const sessionNetPnl = Object.fromEntries(SESSION_OPTIONS.map((session) => [session, 0]));
+  const sessionClosed = Object.fromEntries(SESSION_OPTIONS.map((session) => [session, 0]));
+  const sessionWins = Object.fromEntries(SESSION_OPTIONS.map((session) => [session, 0]));
+
+  const sessionByStrategyMatrix = {
+    rows: SESSION_OPTIONS,
+    cols: [...Object.keys(strategyCounts)],
+    values: SESSION_OPTIONS.map(() => Object.keys(strategyCounts).map(() => 0)),
+  };
+
+  const sessionByPairMatrix = {
+    rows: SESSION_OPTIONS,
+    cols: pairUniverse,
+    values: SESSION_OPTIONS.map(() => pairUniverse.map(() => 0)),
+  };
+
+  const hourFrequency = Array.from({ length: 24 }, () => 0);
+  const hourPnl = Array.from({ length: 24 }, () => 0);
+  const hourClosed = Array.from({ length: 24 }, () => 0);
+
+  const dayPerformance = Array.from({ length: 7 }, () => 0);
+
+  const timeToCloseBuckets = {
+    "<1h": 0,
+    "1-4h": 0,
+    "4-24h": 0,
+    "1-3d": 0,
+    ">3d": 0,
+  };
+
+  rows.forEach((trade) => {
+    const captured = new Date(trade.captured_at_utc);
+    const hour = captured.getHours();
+    hourFrequency[hour] += 1;
+
+    if (Number.isFinite(trade.pnl)) {
+      hourPnl[hour] += trade.pnl;
+    }
+    if (trade.status === "closed") {
+      hourClosed[hour] += 1;
+    }
+
+    dayPerformance[captured.getDay()] += Number.isFinite(trade.pnl) ? trade.pnl : 0;
+
+    SESSION_OPTIONS.forEach((session, sessionIndex) => {
+      if (!(trade.sessions || []).includes(session)) {
+        return;
+      }
+
+      sessionMix[session] += 1;
+      if (Number.isFinite(trade.pnl)) {
+        sessionNetPnl[session] += trade.pnl;
+      }
+      if (trade.status === "closed") {
+        sessionClosed[session] += 1;
+      }
+      if (trade.outcome === "Full Win") {
+        sessionWins[session] += 1;
+      }
+
+      const tradeStrategy = normalizeStrategyName(trade.strategy);
+      sessionByStrategyMatrix.cols.forEach((strategy, strategyIndex) => {
+        if (tradeStrategy === strategy) {
+          sessionByStrategyMatrix.values[sessionIndex][strategyIndex] += Number.isFinite(trade.pnl) ? trade.pnl : 0;
+        }
+      });
+
+      pairUniverse.forEach((pair, pairIndex) => {
+        if (trade.pair === pair) {
+          sessionByPairMatrix.values[sessionIndex][pairIndex] += Number.isFinite(trade.pnl) ? trade.pnl : 0;
+        }
+      });
+    });
+
+    if (trade.status === "closed" && trade.closed_at_utc && trade.captured_at_utc) {
+      const hours = Math.max(0, (toMillis(trade.closed_at_utc) - toMillis(trade.captured_at_utc)) / 3600000);
+      if (hours < 1) {
+        timeToCloseBuckets["<1h"] += 1;
+      } else if (hours < 4) {
+        timeToCloseBuckets["1-4h"] += 1;
+      } else if (hours < 24) {
+        timeToCloseBuckets["4-24h"] += 1;
+      } else if (hours < 72) {
+        timeToCloseBuckets["1-3d"] += 1;
+      } else {
+        timeToCloseBuckets[">3d"] += 1;
+      }
+    }
+  });
+
+  const hourExpectancy = hourPnl.map((value, index) => (hourClosed[index] ? value / hourClosed[index] : 0));
+
+  const sessionWinRate = Object.fromEntries(
+    SESSION_OPTIONS.map((session) => [session, sessionClosed[session] ? (sessionWins[session] / sessionClosed[session]) * 100 : 0])
+  );
+
+  const sessionExpectancy = Object.fromEntries(
+    SESSION_OPTIONS.map((session) => [session, sessionClosed[session] ? sessionNetPnl[session] / sessionClosed[session] : 0])
+  );
+
+  const pairAgg = {};
+  pairUniverse.forEach((pair) => {
+    pairAgg[pair] = { pair, pnl: 0, wins: 0, closed: 0 };
+  });
+
+  rows.forEach((trade) => {
+    if (!pairAgg[trade.pair]) {
+      pairAgg[trade.pair] = { pair: trade.pair, pnl: 0, wins: 0, closed: 0 };
+    }
+    if (Number.isFinite(trade.pnl)) {
+      pairAgg[trade.pair].pnl += trade.pnl;
+    }
+    if (trade.status === "closed") {
+      pairAgg[trade.pair].closed += 1;
+    }
+    if (trade.outcome === "Full Win") {
+      pairAgg[trade.pair].wins += 1;
+    }
+  });
+
+  const pairPnlRanking = Object.values(pairAgg).sort((a, b) => b.pnl - a.pnl);
+  const pairWinRateRanking = Object.values(pairAgg)
+    .map((item) => ({ pair: item.pair, winRate: item.closed ? (item.wins / item.closed) * 100 : 0 }))
+    .sort((a, b) => b.winRate - a.winRate);
+  const pairExpectancyRanking = Object.values(pairAgg)
+    .map((item) => ({ pair: item.pair, expectancy: item.closed ? item.pnl / item.closed : 0 }))
+    .sort((a, b) => b.expectancy - a.expectancy);
+
+  const directionPnl = { Buy: 0, Sell: 0 };
+  const directionClosed = { Buy: 0, Sell: 0 };
+  const directionWins = { Buy: 0, Sell: 0 };
+
+  rows.forEach((trade) => {
+    if (trade.direction !== "Buy" && trade.direction !== "Sell") {
+      return;
+    }
+    if (Number.isFinite(trade.pnl)) {
+      directionPnl[trade.direction] += trade.pnl;
+    }
+    if (trade.status === "closed") {
+      directionClosed[trade.direction] += 1;
+    }
+    if (trade.outcome === "Full Win") {
+      directionWins[trade.direction] += 1;
+    }
+  });
+
+  const directionWinRate = {
+    Buy: directionClosed.Buy ? (directionWins.Buy / directionClosed.Buy) * 100 : 0,
+    Sell: directionClosed.Sell ? (directionWins.Sell / directionClosed.Sell) * 100 : 0,
+  };
+
+  const lotScatter = pnlRows.map((trade) => ({ x: Number(trade.lot_size) || 0, y: trade.pnl }));
+  const lotBucketAgg = {};
+  pnlRows.forEach((trade) => {
+    const bucket = lotBucket(Number(trade.lot_size));
+    lotBucketAgg[bucket] = lotBucketAgg[bucket] || { pnl: 0, count: 0 };
+    lotBucketAgg[bucket].pnl += trade.pnl;
+    lotBucketAgg[bucket].count += 1;
+  });
+  const lotBucketExpectancy = Object.entries(lotBucketAgg).map(([bucket, value]) => ({
+    bucket,
+    expectancy: value.count ? value.pnl / value.count : 0,
+  }));
+
+  const now = Date.now();
+  const openAges = openRows.map((trade) => Math.max(0, (now - toMillis(trade.captured_at_utc)) / 3600000));
+  const openAging = {
+    count: openRows.length,
+    avgHours: openAges.length ? avg(openAges) : 0,
+    maxHours: openAges.length ? Math.max(...openAges) : 0,
+    over24h: openAges.filter((value) => value > 24).length,
+  };
+
+  let bothImages = 0;
+  let beforeImages = 0;
+  let afterImages = 0;
+
+  rows.forEach((trade) => {
+    const hasBefore = Boolean(trade.before_image_id);
+    const hasAfter = Boolean(trade.after_image_id);
+    if (hasBefore) beforeImages += 1;
+    if (hasAfter) afterImages += 1;
+    if (hasBefore && hasAfter) bothImages += 1;
+  });
+
+  const imageCompletenessRate = totalTrades ? (bothImages / totalTrades) * 100 : 0;
+  const beforePresenceRate = totalTrades ? (beforeImages / totalTrades) * 100 : 0;
+  const afterPresenceRate = totalTrades ? (afterImages / totalTrades) * 100 : 0;
+
+  const notes = rows
+    .map((trade) => (trade.note || "").trim())
+    .filter((note) => note.length > 0);
+  const notesUsedCount = notes.length;
+  const noteUsageRate = totalTrades ? (notesUsedCount / totalTrades) * 100 : 0;
+  const medianNoteLength = notes.length ? median(notes.map((note) => note.length)) : 0;
+
+  const editCounts = rows.map((trade) => Number(trade.edit_count || 0));
+  const avgEditCount = editCounts.length ? avg(editCounts) : 0;
+  const maxEditCount = editCounts.length ? Math.max(...editCounts) : 0;
+
+  const editCountDistribution = {};
+  editCounts.forEach((count) => {
+    const bucket = count >= 5 ? "5+" : String(count);
+    editCountDistribution[bucket] = (editCountDistribution[bucket] || 0) + 1;
+  });
+
+  const imageBuckets = [
+    rows.filter((trade) => trade.before_image_id && trade.after_image_id).length,
+    rows.filter((trade) => trade.before_image_id && !trade.after_image_id).length,
+    rows.filter((trade) => !trade.before_image_id && trade.after_image_id).length,
+    rows.filter((trade) => !trade.before_image_id && !trade.after_image_id).length,
+  ];
+
+  const topConfluenceScore = topEntryFromObject(scoreCounts);
+  const topMissingOverall = topEntryFromObject(missingOverall);
+  const topMissingRequired = topEntryFromObject(missingRequired);
+  const topMissingQuality = topEntryFromObject(missingQuality);
+
+  const fullIntegrityShare = totalTrades ? ((integrityCounts.full_confluence || 0) / totalTrades) * 100 : 0;
+  const hardIntegrityShare = totalTrades ? ((integrityCounts.hard_invalidation_present || 0) / totalTrades) * 100 : 0;
+  const gradeAShare = totalTrades ? ((gradeCounts.A || 0) / totalTrades) * 100 : 0;
+  const gradeFShare = totalTrades ? ((gradeCounts.F || 0) / totalTrades) * 100 : 0;
+
+  const latestCompliancePct = complianceTrend.values.length
+    ? complianceTrend.values[complianceTrend.values.length - 1]
+    : null;
+
+  const bestSessionByShareRaw = topEntryFromObject(sessionMix);
+  const bestSessionByShare = {
+    ...bestSessionByShareRaw,
+    sharePct: totalTrades ? (bestSessionByShareRaw.value / totalTrades) * 100 : 0,
+  };
+  const bestSessionByNet = topEntryFromObject(sessionNetPnl);
+  const bestSessionByWinRate = topEntryFromObject(sessionWinRate);
+  const bestSessionByExpectancy = topEntryFromObject(sessionExpectancy);
+  const worstSessionByExpectancy = bottomEntryFromObject(sessionExpectancy);
+
+  const hottestSessionStrategyCell = topMatrixCell(
+    sessionByStrategyMatrix.rows,
+    sessionByStrategyMatrix.cols,
+    sessionByStrategyMatrix.values
+  );
+  const hottestSessionPairCell = topMatrixCell(
+    sessionByPairMatrix.rows,
+    sessionByPairMatrix.cols,
+    sessionByPairMatrix.values
+  );
+
+  const busiestHourIndex = indexOfMax(hourFrequency);
+  const bestHourExpectancyIndex = indexOfMax(hourExpectancy);
+  const busiestHour = String(Math.max(0, busiestHourIndex)).padStart(2, "0");
+  const busiestHourCount = hourFrequency[busiestHourIndex] || 0;
+  const bestHourByExpectancy = String(Math.max(0, bestHourExpectancyIndex)).padStart(2, "0");
+  const bestHourExpectancyValue = hourExpectancy[bestHourExpectancyIndex] || 0;
+
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const bestDayIndex = indexOfMax(dayPerformance);
+  const bestDayByPnl = {
+    name: dayNames[Math.max(0, bestDayIndex)] || "Sun",
+    value: dayPerformance[bestDayIndex] || 0,
+  };
+
+  const dominantTimeToCloseBucket = topEntryFromObject(timeToCloseBuckets);
+  const bestPairByPnl = pairPnlRanking[0] ? { key: pairPnlRanking[0].pair, value: pairPnlRanking[0].pnl } : { key: "-", value: 0 };
+  const worstPairByPnl = pairPnlRanking[pairPnlRanking.length - 1]
+    ? { key: pairPnlRanking[pairPnlRanking.length - 1].pair, value: pairPnlRanking[pairPnlRanking.length - 1].pnl }
+    : { key: "-", value: 0 };
+  const bestPairByWinRate = pairWinRateRanking[0]
+    ? { key: pairWinRateRanking[0].pair, value: pairWinRateRanking[0].winRate }
+    : { key: "-", value: 0 };
+  const bestPairByExpectancy = pairExpectancyRanking[0]
+    ? { key: pairExpectancyRanking[0].pair, value: pairExpectancyRanking[0].expectancy }
+    : { key: "-", value: 0 };
+
+  const bestLotBucket = lotBucketExpectancy.length
+    ? [...lotBucketExpectancy].sort((a, b) => b.expectancy - a.expectancy)[0]
+    : { bucket: "-", expectancy: 0 };
+
+  const withAfterAvgPnl = avg(pnlRows.filter((trade) => trade.after_image_id).map((trade) => trade.pnl));
+  const withoutAfterAvgPnl = avg(pnlRows.filter((trade) => !trade.after_image_id).map((trade) => trade.pnl));
+  const afterImageOutcomeDelta = withAfterAvgPnl - withoutAfterAvgPnl;
+
+  const highLotAvgPnl = avg(pnlRows.filter((trade) => Number(trade.lot_size) > 0.1).map((trade) => trade.pnl));
+  const baselineLotAvgPnl = avg(pnlRows.filter((trade) => Number(trade.lot_size) <= 0.1).map((trade) => trade.pnl));
+  const highLotUnderperformance = highLotAvgPnl - baselineLotAvgPnl;
+
+  const fullClosedRows = closedRows.filter((trade) => trade.setup_integrity === "full_confluence");
+  const hardClosedRows = closedRows.filter((trade) => trade.setup_integrity === "hard_invalidation_present");
+  const fullConfluenceWinRate = fullClosedRows.length
+    ? (fullClosedRows.filter((trade) => trade.outcome === "Full Win").length / fullClosedRows.length) * 100
+    : 0;
+  const hardInvalidationWinRate = hardClosedRows.length
+    ? (hardClosedRows.filter((trade) => trade.outcome === "Full Win").length / hardClosedRows.length) * 100
+    : 0;
+
+  const nowDate = new Date();
+  const monthStartMs = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).getTime();
+  const monthRows = rows.filter((trade) => toMillis(trade.captured_at_utc) >= monthStartMs);
+  const monthClosedRows = monthRows.filter((trade) => trade.status === "closed");
+  const monthClosedPnlRows = monthClosedRows.filter((trade) => Number.isFinite(trade.pnl));
+  const fMonthRows = monthRows.filter((trade) => trade.setup_grade === "F");
+  const fMonthClosedPnlRows = fMonthRows.filter((trade) => trade.status === "closed" && Number.isFinite(trade.pnl));
+  const fTradesThisMonth = fMonthRows.length;
+  const fNetPnlThisMonth = sum(fMonthClosedPnlRows.map((trade) => trade.pnl));
+  const fLossAbsThisMonth = Math.abs(sum(fMonthClosedPnlRows.filter((trade) => trade.pnl < 0).map((trade) => trade.pnl)));
+  const totalLossAbsThisMonth = Math.abs(sum(monthClosedPnlRows.filter((trade) => trade.pnl < 0).map((trade) => trade.pnl)));
+  const fLossContributionPct = totalLossAbsThisMonth ? (fLossAbsThisMonth / totalLossAbsThisMonth) * 100 : 0;
+  const fAvgLossPerTradeThisMonth = avg(fMonthClosedPnlRows.filter((trade) => trade.pnl < 0).map((trade) => trade.pnl));
+  const netPnlThisMonth = sum(monthClosedPnlRows.map((trade) => trade.pnl));
+
+  const requiredMissesFMonth = {};
+  fMonthRows.forEach((trade) => {
+    const rules = getConfluenceRules(trade.strategy);
+    (trade.missing_confluences || []).forEach((item) => {
+      if (rules.required.includes(item)) {
+        requiredMissesFMonth[item] = (requiredMissesFMonth[item] || 0) + 1;
+      }
+    });
+  });
+  const topMissingRequiredConfluenceFMonthEntry = topEntryFromObject(requiredMissesFMonth);
+  const topMissingRequiredConfluenceFMonth = topMissingRequiredConfluenceFMonthEntry.key;
+  const topMissingRequiredConfluenceFMonthCount = topMissingRequiredConfluenceFMonthEntry.value;
+
+  const lotPnlCorrelation = pearsonCorrelation(
+    pnlRows.map((trade) => Number(trade.lot_size) || 0),
+    pnlRows.map((trade) => trade.pnl)
+  );
+
+  return {
+    totalTrades,
+    closedTrades: closedRows.length,
+    openTrades: openRows.length,
+    netPnl,
+    grossProfit,
+    grossLossAbs,
+    winRate,
+    lossRate,
+    breakevenRate,
+    profitFactor,
+    expectancy,
+    avgWin,
+    avgLoss,
+    winLossRatio,
+    outcomeCounts,
+
+    equityCurve,
+    drawdownCurve,
+    maxDrawdown,
+    currentDrawdown,
+    longestDrawdownDuration,
+    bestTrade,
+    worstTrade,
+    maxWinStreak,
+    maxLossStreak,
+    recoveryFactor,
+
+    strategyCounts,
+    strategyNetPnl,
+    strategyWinRate,
+    topConfluenceScore,
+    scoreCounts,
+    integrityCounts,
+    gradeCounts,
+    fullIntegrityShare,
+    hardIntegrityShare,
+    gradeAShare,
+    gradeFShare,
+    missingOverall,
+    missingRequired,
+    missingQuality,
+    topMissingOverall,
+    topMissingRequired,
+    topMissingQuality,
+    integrityPerformance,
+    complianceTrend,
+    latestCompliancePct,
+    gradeVsPnl,
+    fullConfluenceWinRate,
+    hardInvalidationWinRate,
+
+    sessionMix,
+    sessionNetPnl,
+    sessionWinRate,
+    sessionExpectancy,
+    bestSessionByShare,
+    bestSessionByNet,
+    bestSessionByWinRate,
+    bestSessionByExpectancy,
+    worstSessionByExpectancy,
+    sessionByStrategyMatrix,
+    sessionByPairMatrix,
+    hottestSessionStrategyCell,
+    hottestSessionPairCell,
+    hourFrequency,
+    hourExpectancy,
+    busiestHour,
+    busiestHourCount,
+    bestHourByExpectancy,
+    bestHourExpectancyValue,
+    dayPerformance,
+    bestDayByPnl,
+    timeToCloseBuckets,
+    dominantTimeToCloseBucket,
+
+    pairPnlRanking,
+    pairWinRateRanking,
+    pairExpectancyRanking,
+    bestPairByPnl,
+    worstPairByPnl,
+    bestPairByWinRate,
+    bestPairByExpectancy,
+    directionPnl,
+    directionWinRate,
+    lotScatter,
+    lotPnlCorrelation,
+    lotBucketExpectancy,
+    bestLotBucket: { key: bestLotBucket.bucket, value: bestLotBucket.expectancy },
+    highLotAvgPnl,
+    baselineLotAvgPnl,
+    highLotUnderperformance,
+    openAging,
+
+    imageCompletenessRate,
+    beforePresenceRate,
+    afterPresenceRate,
+    withAfterAvgPnl,
+    withoutAfterAvgPnl,
+    afterImageOutcomeDelta,
+    noteUsageRate,
+    notesUsedCount,
+    medianNoteLength,
+    avgEditCount,
+    maxEditCount,
+    editCountDistribution,
+    imageBuckets,
+    netPnlThisMonth,
+    closedTradesThisMonth: monthClosedRows.length,
+    fTradesThisMonth,
+    fNetPnlThisMonth,
+    fLossContributionPct,
+    fAvgLossPerTradeThisMonth,
+    topMissingRequiredConfluenceFMonth,
+    topMissingRequiredConfluenceFMonthCount,
+  };
+}
+
+function streaksFromRows(rows) {
+  let maxWinStreak = 0;
+  let maxLossStreak = 0;
+  let currentWin = 0;
+  let currentLoss = 0;
+
+  rows.forEach((trade) => {
+    if (!Number.isFinite(trade.pnl)) {
+      return;
+    }
+    if (trade.pnl > 0) {
+      currentWin += 1;
+      currentLoss = 0;
+      maxWinStreak = Math.max(maxWinStreak, currentWin);
+      return;
+    }
+    if (trade.pnl < 0) {
+      currentLoss += 1;
+      currentWin = 0;
+      maxLossStreak = Math.max(maxLossStreak, currentLoss);
+      return;
+    }
+    currentWin = 0;
+    currentLoss = 0;
+  });
+
+  return { maxWinStreak, maxLossStreak };
+}
+
+function lotBucket(lot) {
+  if (lot <= 0.01) return "<=0.010";
+  if (lot <= 0.05) return "0.011-0.050";
+  if (lot <= 0.1) return "0.051-0.100";
+  if (lot <= 0.5) return "0.101-0.500";
+  return ">0.500";
+}
+
+function getWeekKey(timestamp) {
+  const date = new Date(timestamp || Date.now());
+  const firstDay = new Date(date.getFullYear(), 0, 1);
+  const days = Math.floor((date - firstDay) / 86400000);
+  const week = Math.ceil((days + firstDay.getDay() + 1) / 7);
+  return `${date.getFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function exportCsv(rows, filename) {
+  const headers = [
+    "id",
+    "captured_at_utc",
+    "pair",
+    "direction",
+    "lot_size",
+    "sessions",
+    "strategy",
+    "present_confluences",
+    "confluence_score",
+    "total_confluences",
+    "missing_confluences",
+    "required_missing_count",
+    "quality_missing_count",
+    "setup_integrity",
+    "setup_grade",
+    "outcome",
+    "status",
+    "pnl_usd",
+    "note",
+    "before_image_present",
+    "after_image_present",
+    "closed_at_utc",
+    "edit_count",
+    "created_at",
+    "updated_at",
+  ];
+
+  const csvRows = rows.map((row) => [
+    row.id,
+    row.captured_at_utc,
+    row.pair,
+    row.direction,
+    Number(row.lot_size).toFixed(3),
+    (row.sessions || []).join("|"),
+    row.strategy,
+    (row.present_confluences || []).join("|"),
+    row.confluence_score,
+    row.total_confluences,
+    (row.missing_confluences || []).join("|"),
+    row.required_missing_count,
+    row.quality_missing_count,
+    row.setup_integrity,
+    row.setup_grade,
+    row.outcome || "",
+    row.status,
+    Number.isFinite(row.pnl) ? row.pnl : "",
+    row.note || "",
+    row.before_image_id ? "Yes" : "No",
+    row.after_image_id ? "Yes" : "No",
+    row.closed_at_utc || "",
+    Number(row.edit_count || 0),
+    row.created_at,
+    row.updated_at,
+  ]);
+
+  const content = [headers, ...csvRows].map((entry) => entry.map(csvEscape).join(",")).join("\n");
+
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+  showToast("CSV exported", "ok");
+}
+
+function csvEscape(value) {
+  const text = value == null ? "" : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function formatMoney(value) {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}$${value.toFixed(2)}`;
+}
+
+function formatDateTime(utcIso) {
+  if (!utcIso) {
+    return "-";
+  }
+  const date = new Date(utcIso);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function combineDateTime(date, time) {
+  return new Date(`${date}T${time || "00:00"}:00`);
+}
+
+function toDateInputValue(dateInput) {
+  const date = new Date(dateInput);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function toTimeInputValue(dateInput) {
+  const date = new Date(dateInput);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(11, 16);
+}
+
+function pairOptionsHtml(selected, includeBlank, includeAddAction = true) {
+  const nextSelected = normalizedSelectedPair(selected);
+  const options = [];
+  if (includeBlank) {
+    options.push('<option value="">-</option>');
+  }
+  getPairUniverse().forEach((value) => {
+    options.push(`<option value="${escapeHtmlAttr(value)}" ${nextSelected === value ? "selected" : ""}>${escapeHtml(value)}</option>`);
+  });
+  if (includeAddAction) {
+    options.push(`<option value="${ADD_PAIR_OPTION_VALUE}">+ Add pair...</option>`);
+  }
+  return options.join("");
+}
+
+function optionsHtml(values, selected, includeBlank) {
+  const options = [];
+  if (includeBlank) {
+    options.push(`<option value="">-</option>`);
+  }
+  values.forEach((value) => {
+    options.push(`<option value="${escapeHtmlAttr(value)}" ${selected === value ? "selected" : ""}>${escapeHtml(value)}</option>`);
+  });
+  return options.join("");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function escapeHtmlAttr(value) {
+  return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
+function slugify(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function toMillis(value) {
+  const date = new Date(value || 0);
+  const ms = date.getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function sum(values) {
+  return values.reduce((acc, value) => acc + value, 0);
+}
+
+function avg(values) {
+  if (!values.length) {
+    return 0;
+  }
+  return sum(values) / values.length;
+}
+
+function median(values) {
+  if (!values.length) {
+    return 0;
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[mid];
+  }
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function topEntryFromObject(obj) {
+  const entries = Object.entries(obj || {});
+  if (!entries.length) {
+    return { key: "None", value: 0 };
+  }
+  entries.sort((a, b) => (b[1] || 0) - (a[1] || 0));
+  return { key: entries[0][0], value: Number(entries[0][1] || 0) };
+}
+
+function bottomEntryFromObject(obj) {
+  const entries = Object.entries(obj || {});
+  if (!entries.length) {
+    return { key: "None", value: 0 };
+  }
+  entries.sort((a, b) => (a[1] || 0) - (b[1] || 0));
+  return { key: entries[0][0], value: Number(entries[0][1] || 0) };
+}
+
+function topMatrixCell(rows, cols, matrix) {
+  let best = { row: rows?.[0] || "-", col: cols?.[0] || "-", value: 0 };
+  (rows || []).forEach((row, rowIndex) => {
+    (cols || []).forEach((col, colIndex) => {
+      const value = Number(matrix?.[rowIndex]?.[colIndex] || 0);
+      if (value > best.value) {
+        best = { row, col, value };
+      }
+    });
+  });
+  return best;
+}
+
+function indexOfMax(values) {
+  if (!values || !values.length) {
+    return 0;
+  }
+  let bestIndex = 0;
+  let bestValue = Number(values[0] || 0);
+  for (let index = 1; index < values.length; index += 1) {
+    const value = Number(values[index] || 0);
+    if (value > bestValue) {
+      bestValue = value;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
+}
+
+function pearsonCorrelation(xs, ys) {
+  if (!Array.isArray(xs) || !Array.isArray(ys) || xs.length !== ys.length || xs.length < 2) {
+    return null;
+  }
+  const n = xs.length;
+  const meanX = avg(xs);
+  const meanY = avg(ys);
+  let numerator = 0;
+  let sumSqX = 0;
+  let sumSqY = 0;
+
+  for (let index = 0; index < n; index += 1) {
+    const x = Number(xs[index] || 0) - meanX;
+    const y = Number(ys[index] || 0) - meanY;
+    numerator += x * y;
+    sumSqX += x * x;
+    sumSqY += y * y;
+  }
+
+  const denominator = Math.sqrt(sumSqX * sumSqY);
+  if (!denominator) {
+    return null;
+  }
+  return numerator / denominator;
+}
+
+function normalizeTrade(trade) {
+  const strategy = normalizeStrategyName(trade.strategy);
+  const presentConfluences = Array.isArray(trade.present_confluences) ? trade.present_confluences : [];
+  const inferred = inferConfluence(strategy, presentConfluences);
+
+  const status = trade.status || (trade.outcome ? "closed" : "open");
+
+  return {
+    ...trade,
+    pair: normalizePairCode(trade.pair || ""),
+    direction: trade.direction || "",
+    lot_size: Number(trade.lot_size || 0.001),
+    sessions: Array.isArray(trade.sessions) ? trade.sessions : [],
+    strategy,
+    present_confluences: presentConfluences,
+    confluence_score: trade.confluence_score || inferred.confluence_score,
+    total_confluences: Number.isFinite(trade.total_confluences) ? trade.total_confluences : inferred.total_confluences,
+    missing_confluences: Array.isArray(trade.missing_confluences) ? trade.missing_confluences : inferred.missing_confluences,
+    required_missing_count: Number.isFinite(trade.required_missing_count)
+      ? trade.required_missing_count
+      : inferred.required_missing_count,
+    quality_missing_count: Number.isFinite(trade.quality_missing_count)
+      ? trade.quality_missing_count
+      : inferred.quality_missing_count,
+    setup_integrity: trade.setup_integrity || inferred.setup_integrity,
+    setup_grade: trade.setup_grade || inferred.setup_grade,
+    outcome: trade.outcome || "",
+    pnl: Number.isFinite(trade.pnl) ? trade.pnl : null,
+    note: trade.note || "",
+    captured_at_utc: trade.captured_at_utc || trade.created_at || new Date().toISOString(),
+    captured_at_local: trade.captured_at_local || formatDateTime(trade.captured_at_utc || trade.created_at),
+    timezone_offset_min: Number.isFinite(trade.timezone_offset_min) ? trade.timezone_offset_min : new Date().getTimezoneOffset(),
+    status,
+    closed_at_utc: trade.closed_at_utc || null,
+    edit_count: Number.isFinite(trade.edit_count) ? trade.edit_count : 0,
+    before_image_id: trade.before_image_id || null,
+    after_image_id: trade.after_image_id || null,
+    created_at: trade.created_at || new Date().toISOString(),
+    updated_at: trade.updated_at || new Date().toISOString(),
+  };
+}
+
+async function loadTradesFromDb() {
+  const rows = await dbGetAllTrades();
+  trades = rows.map(normalizeTrade);
+}
+
+async function dbGetImageBlob(id) {
+  return dbGetImage(id);
+}

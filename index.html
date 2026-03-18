@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lazy But I Love Data</title>
+    <meta
+      name="description"
+      content="Private forex trade journal with confluence grading, screenshot evidence, and deep analytics."
+    />
+    <meta name="theme-color" content="#7b61ff" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Lazy But I Love Data" />
+    <meta
+      property="og:description"
+      content="Private forex trade journal with confluence grading, screenshot evidence, and deep analytics."
+    />
+    <meta property="og:image" content="/assets/share-card.svg" />
+    <meta property="og:image:type" content="image/svg+xml" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Lazy But I Love Data" />
+    <meta
+      name="twitter:description"
+      content="Private forex trade journal with confluence grading, screenshot evidence, and deep analytics."
+    />
+    <meta name="twitter:image" content="/assets/share-card.svg" />
+    <link rel="icon" type="image/svg+xml" href="/assets/journal-icon.svg" />
+    <link rel="mask-icon" href="/assets/journal-icon.svg" color="#7b61ff" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&family=Orbitron:wght@500;700&family=Rajdhani:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-glow bg-glow-a"></div>
+    <div class="bg-glow bg-glow-b"></div>
+
+    <main class="app-shell">
+      <header class="hero">
+        <div class="hero-brand">
+          <button id="themeToggle" class="theme-switch" type="button" aria-pressed="false" aria-label="Switch to dark mode">
+            <span class="theme-switch-track">
+              <span class="theme-switch-label">Light</span>
+              <span class="theme-switch-label">Dark</span>
+              <span class="theme-switch-thumb" aria-hidden="true"></span>
+            </span>
+          </button>
+          <div>
+          <div class="hero-kicker">Private Trade Journal</div>
+          <h1>Lazy But I Love Data</h1>
+          </div>
+        </div>
+      </header>
+
+      <section class="card spotlight-card" id="spotlight-card">
+        <div class="section-head section-head-tight">
+          <h2>Insight Reel</h2>
+          <div class="micro-hint">At-a-glance view</div>
+        </div>
+        <div id="topInsightPanel" class="analytics-panel"></div>
+      </section>
+
+      <details class="card form-card" id="entry-card" open>
+        <summary class="summary">
+          <span class="summary-title-wrap">
+            <span class="summary-title">Log Trade</span>
+          </span>
+          <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
+        </summary>
+
+        <div class="section-head section-head-tight">
+          <div class="entry-time-tools">
+            <button id="manualTimeToggle" type="button" class="btn btn-ghost btn-tiny time-toggle-btn">Set Time Manually</button>
+            <div id="entryCapturedHint" class="micro-hint">Timestamp: device time (auto)</div>
+          </div>
+          <button id="reset-form" type="button" class="btn btn-ghost">Clear</button>
+        </div>
+
+        <form id="trade-form" novalidate>
+          <div id="manualTimeFields" class="manual-time-fields" style="display: none">
+            <label class="field">
+              Date
+              <input id="tradeDate" name="tradeDate" type="date" />
+            </label>
+            <label class="field">
+              Time
+              <input id="tradeTime" name="tradeTime" type="time" list="time-suggestions" />
+              <datalist id="time-suggestions"></datalist>
+            </label>
+          </div>
+
+          <div class="compact-grid">
+            <label class="field">
+              Pair
+              <select id="pair" name="pair" required></select>
+            </label>
+            <label class="field">
+              Direction
+              <select id="direction" name="direction" required>
+                <option value="">-</option>
+                <option value="Buy">Buy</option>
+                <option value="Sell">Sell</option>
+              </select>
+            </label>
+            <label class="field">
+              Lot Size
+              <div class="stepper">
+                <button type="button" class="stepper-btn" id="lotDec" aria-label="Decrease lot">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+                <input id="lotSize" name="lotSize" type="number" step="0.001" min="0.001" placeholder="0.010" required />
+                <button type="button" class="stepper-btn" id="lotInc" aria-label="Increase lot">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+            </label>
+
+            <div class="field">
+              Session
+              <div class="chip-row" id="sessionChips">
+                <label class="chip"><input type="checkbox" name="session" value="London" /><span>London</span></label>
+                <label class="chip"><input type="checkbox" name="session" value="NY" /><span>NY</span></label>
+                <label class="chip"><input type="checkbox" name="session" value="Asian" /><span>Asian</span></label>
+              </div>
+            </div>
+
+            <label class="field">
+              Strategy
+              <select id="strategy" name="strategy" required>
+                <option value="">-</option>
+                <option value="ICC">ICC</option>
+                <option value="SMC">SMC</option>
+              </select>
+            </label>
+
+            <label class="field">
+              Outcome
+              <select id="outcome" name="outcome">
+                <option value="">Open - fill later</option>
+                <option value="Full Win">Full Win</option>
+                <option value="Partial + BE">Partial + BE</option>
+                <option value="Breakeven">Breakeven</option>
+                <option value="Full Loss">Full Loss</option>
+              </select>
+            </label>
+
+            <label class="field">
+              PnL ($)
+              <input id="pnl" name="pnl" type="text" placeholder="+3.50 or -1.20" />
+            </label>
+
+            <label class="field note-field">
+              Note
+              <input id="note" name="note" type="text" maxlength="240" placeholder="Any useful context to remember this trade" />
+            </label>
+          </div>
+
+          <details id="createConfluenceDetails" class="confluence-card confluence-collapsible">
+            <summary class="confluence-toggle">
+              <span>Setup Checklist</span>
+              <span class="confluence-toggle-meta">
+                <span class="micro-hint">Tap to expand</span>
+                <span class="confluence-toggle-v" aria-hidden="true">⌄</span>
+              </span>
+            </summary>
+            <div class="confluence-body">
+              <div class="micro-hint">Tick all confluences that were present</div>
+              <div id="confluenceChecklist" class="confluence-grid"></div>
+              <div id="confluenceSummary" class="confluence-summary muted-empty">Select strategy to load checklist.</div>
+            </div>
+          </details>
+
+          <div class="upload-grid">
+            <div class="field">
+              Before Screenshot
+              <div id="beforeZone" class="drop-zone" tabindex="0">
+                <div class="dz-text">Drop / Paste / Browse</div>
+                <input id="beforeFile" class="file-overlay" type="file" accept="image/*" />
+              </div>
+              <img id="beforePreview" class="preview" alt="Before preview" />
+              <button type="button" id="clearBefore" class="mini-btn" style="display: none">Remove</button>
+            </div>
+            <div class="field">
+              After Screenshot
+              <div id="afterZone" class="drop-zone" tabindex="0">
+                <div class="dz-text">Drop / Paste / Browse</div>
+                <input id="afterFile" class="file-overlay" type="file" accept="image/*" />
+              </div>
+              <img id="afterPreview" class="preview" alt="After preview" />
+              <button type="button" id="clearAfter" class="mini-btn" style="display: none">Remove</button>
+            </div>
+          </div>
+
+          <p id="form-error" class="error" role="alert"></p>
+
+          <div class="action-row">
+            <button type="submit" id="saveBtn" class="btn btn-primary">Log Trade</button>
+          </div>
+        </form>
+      </details>
+
+      <details class="card" id="analytics-card">
+        <summary class="summary">
+          <span class="summary-title">Edge Review</span>
+          <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
+        </summary>
+
+        <div id="analyticsTabs" class="analytics-tabs">
+          <button class="analytics-tab is-active" data-tab="performance" type="button">Performance</button>
+          <button class="analytics-tab" data-tab="risk" type="button">Risk</button>
+          <button class="analytics-tab" data-tab="confluence" type="button">Confluence</button>
+          <button class="analytics-tab" data-tab="sessions" type="button">Sessions/Timing</button>
+          <button class="analytics-tab" data-tab="market" type="button">Market/Execution</button>
+          <button class="analytics-tab" data-tab="behavior" type="button">Behavior</button>
+        </div>
+
+        <div id="analyticsPanel" class="analytics-panel"></div>
+      </details>
+
+      <details class="card" id="history-card">
+        <summary class="summary">
+          <span class="summary-title">Journal History</span>
+          <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
+        </summary>
+
+        <div class="history-toolbar">
+          <div class="toolbar-row">
+            <div class="filter-pills">
+              <select id="filterPair" class="filter-pill"><option value="">All Pairs</option></select>
+              <select id="filterSession" class="filter-pill">
+                <option value="">All Sessions</option>
+                <option value="London">London</option>
+                <option value="NY">NY</option>
+                <option value="Asian">Asian</option>
+              </select>
+              <select id="filterOutcome" class="filter-pill">
+                <option value="">All Outcomes</option>
+                <option value="Full Win">Full Win</option>
+                <option value="Partial + BE">Partial + BE</option>
+                <option value="Breakeven">Breakeven</option>
+                <option value="Full Loss">Full Loss</option>
+                <option value="__OPEN__">Open</option>
+              </select>
+              <select id="filterStrategy" class="filter-pill">
+                <option value="">All Strategies</option>
+                <option value="ICC">ICC</option>
+                <option value="SMC">SMC</option>
+              </select>
+              <select id="filterIntegrity" class="filter-pill">
+                <option value="">All Integrity</option>
+                <option value="full_confluence">Full Confluence</option>
+                <option value="one_soft_confluence_missing">One Soft Missing</option>
+                <option value="multiple_soft_confluences_missing">Multiple Soft Missing</option>
+                <option value="hard_invalidation_present">Hard Invalidation</option>
+              </select>
+            </div>
+          </div>
+          <div class="toolbar-row">
+            <div class="view-toggle">
+              <button id="viewList" class="view-btn" type="button" title="List view">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="0.5" fill="currentColor"/><circle cx="3" cy="12" r="0.5" fill="currentColor"/><circle cx="3" cy="18" r="0.5" fill="currentColor"/></svg>
+              </button>
+              <button id="viewGrid" class="view-btn is-active" type="button" title="Gallery view">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+              </button>
+            </div>
+            <button id="export-all" class="btn btn-ghost" type="button">Export All CSV</button>
+            <button id="export-filtered" class="btn btn-ghost" type="button">Export Filtered</button>
+          </div>
+        </div>
+
+        <div id="historyGallery" class="history-gallery"></div>
+      </details>
+
+      <details class="card" id="settings-card">
+        <summary class="summary">
+          <span class="summary-title">Settings</span>
+          <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
+        </summary>
+
+        <div class="settings-grid">
+          <label class="field settings-switch">
+            Insight Reel
+            <span class="settings-switch-row">
+              <input id="settingShowInsightReel" type="checkbox" />
+              <span>Show at top</span>
+            </span>
+          </label>
+          <label class="field">
+            Strategy Mode
+            <select id="settingStrategyMode">
+              <option value="all">All strategies</option>
+            </select>
+          </label>
+        </div>
+
+        <article class="confluence-card settings-rules-card">
+          <div class="section-head section-head-tight">
+            <h3>Confluence Map</h3>
+            <div class="settings-actions">
+              <button id="settingsResetRules" type="button" class="btn btn-ghost btn-tiny">Reset Defaults</button>
+              <button id="settingsSaveRules" type="button" class="btn btn-primary btn-tiny">Save Rules</button>
+            </div>
+          </div>
+
+          <div id="settingsStrategyTabs" class="analytics-tabs settings-tabs"></div>
+
+          <div class="settings-strategy-add">
+            <input id="settingsNewStrategy" type="text" maxlength="24" placeholder="Add strategy (e.g. SMT)" />
+            <button id="settingsAddStrategy" type="button" class="btn btn-ghost btn-tiny">Add Strategy</button>
+          </div>
+
+          <div id="settingsRuleEditor" class="settings-rule-editor"></div>
+          <div class="micro-hint">
+            Required confluences define setup validity. Quality confluences upgrade setup quality.
+          </div>
+        </article>
+      </details>
+
+      <footer class="app-footer">by teerex</footer>
+    </main>
+
+    <div id="toast" class="toast" aria-live="polite"></div>
+
+    <div id="edit-modal" class="modal-backdrop" style="display: none">
+      <div class="modal-box">
+        <div class="section-head">
+          <h2>Edit Trade</h2>
+          <button type="button" id="modal-close" class="btn btn-ghost">Close</button>
+        </div>
+
+        <form id="edit-form" novalidate>
+          <input type="hidden" id="editId" />
+
+          <div class="compact-grid">
+            <label class="field">
+              Pair
+              <select id="editPair"></select>
+            </label>
+            <label class="field">Direction
+              <select id="editDirection">
+                <option value="">-</option>
+                <option value="Buy">Buy</option>
+                <option value="Sell">Sell</option>
+              </select>
+            </label>
+            <label class="field">Lot Size
+              <div class="stepper">
+                <button type="button" class="stepper-btn" id="editLotDec" aria-label="Decrease lot">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+                <input id="editLotSize" type="number" step="0.001" min="0.001" />
+                <button type="button" class="stepper-btn" id="editLotInc" aria-label="Increase lot">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+            </label>
+            <div class="field">Session
+              <div class="chip-row">
+                <label class="chip"><input type="checkbox" name="editSession" value="London" /><span>London</span></label>
+                <label class="chip"><input type="checkbox" name="editSession" value="NY" /><span>NY</span></label>
+                <label class="chip"><input type="checkbox" name="editSession" value="Asian" /><span>Asian</span></label>
+              </div>
+            </div>
+            <label class="field">Strategy
+              <select id="editStrategy">
+                <option value="">-</option>
+                <option value="ICC">ICC</option>
+                <option value="SMC">SMC</option>
+              </select>
+            </label>
+            <label class="field">Outcome
+              <select id="editOutcome">
+                <option value="">Open - fill later</option>
+                <option value="Full Win">Full Win</option>
+                <option value="Partial + BE">Partial + BE</option>
+                <option value="Breakeven">Breakeven</option>
+                <option value="Full Loss">Full Loss</option>
+              </select>
+            </label>
+            <label class="field">PnL ($)<input id="editPnl" type="text" /></label>
+            <label class="field note-field">Note<input id="editNote" type="text" maxlength="240" /></label>
+          </div>
+
+          <details id="editConfluenceDetails" class="confluence-card confluence-collapsible">
+            <summary class="confluence-toggle">
+              <span>Setup Checklist</span>
+              <span class="confluence-toggle-meta">
+                <span class="micro-hint">Tap to expand</span>
+                <span class="confluence-toggle-v" aria-hidden="true">⌄</span>
+              </span>
+            </summary>
+            <div class="confluence-body">
+              <div class="section-head section-head-tight">
+                <div class="micro-hint">Tick all confluences that were present</div>
+                <button id="editManualTimeToggle" type="button" class="btn btn-ghost btn-tiny time-toggle-btn">Set Time Manually</button>
+              </div>
+              <div id="editManualTimeFields" class="manual-time-fields" style="display: none">
+                <label class="field">Date<input id="editDate" type="date" /></label>
+                <label class="field">Time<input id="editTime" type="time" /></label>
+              </div>
+              <div id="editConfluenceChecklist" class="confluence-grid"></div>
+              <div id="editConfluenceSummary" class="confluence-summary muted-empty"></div>
+            </div>
+          </details>
+
+          <div class="upload-grid">
+            <div class="field">
+              Before Screenshot
+              <div id="editBeforeZone" class="drop-zone" tabindex="0">
+                <div class="dz-text">Drop / Paste / Browse</div>
+                <input id="editBeforeFile" class="file-overlay" type="file" accept="image/*" />
+              </div>
+              <img id="editBeforePreview" class="preview" alt="Before preview" />
+              <button type="button" id="editClearBefore" class="mini-btn" style="display: none">Remove</button>
+            </div>
+            <div class="field">
+              After Screenshot
+              <div id="editAfterZone" class="drop-zone" tabindex="0">
+                <div class="dz-text">Drop / Paste / Browse</div>
+                <input id="editAfterFile" class="file-overlay" type="file" accept="image/*" />
+              </div>
+              <img id="editAfterPreview" class="preview" alt="After preview" />
+              <button type="button" id="editClearAfter" class="mini-btn" style="display: none">Remove</button>
+            </div>
+          </div>
+
+          <p id="edit-error" class="error"></p>
+          <div class="action-row">
+            <button id="delete-trade" type="button" class="btn btn-danger">Delete</button>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

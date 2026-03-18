@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# local environments
+.venv/
+node_modules/
+
+# test artifacts
+playwright-report/
+test-results/
+
+# local server/temp
+*.log

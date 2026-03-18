@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Lazy But I Love Data icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9c7bff"/>
+      <stop offset="100%" stop-color="#6247e8"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <path d="M16 43h32" stroke="#ffffff" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
+  <path d="M20 40l9-10 8 6 8-12" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="29" cy="30" r="3" fill="#ffffff"/>
+  <circle cx="37" cy="36" r="3" fill="#ffffff"/>
+  <circle cx="45" cy="24" r="3" fill="#ffffff"/>
+</svg>
