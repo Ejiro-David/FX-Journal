@@ -137,7 +137,6 @@
                 <option value="SMC">SMC</option>
               </select>
             </label>
-
             <label class="field">
               Outcome
               <select id="outcome" name="outcome">
@@ -148,32 +147,24 @@
                 <option value="Full Loss">Full Loss</option>
               </select>
             </label>
-
-            <label class="field">
+            <label id="entryPnlField" class="field entry-field-secondary is-secondary">
               PnL ($)
               <input id="pnl" name="pnl" type="text" placeholder="+3.50 or -1.20" />
             </label>
-
             <label class="field note-field">
-              Note
+              Note (optional)
               <input id="note" name="note" type="text" maxlength="240" placeholder="Any useful context to remember this trade" />
             </label>
           </div>
 
-          <details id="createConfluenceDetails" class="confluence-card confluence-collapsible">
-            <summary class="confluence-toggle">
+          <div id="createConfluenceDetails" class="confluence-card" hidden>
+            <div class="section-head section-head-tight">
               <span>Setup Checklist</span>
-              <span class="confluence-toggle-meta">
-                <span class="micro-hint">Tap to expand</span>
-                <span class="confluence-toggle-v" aria-hidden="true">⌄</span>
-              </span>
-            </summary>
-            <div class="confluence-body">
-              <div class="micro-hint">Tick all confluences that were present</div>
-              <div id="confluenceChecklist" class="confluence-grid"></div>
-              <div id="confluenceSummary" class="confluence-summary muted-empty">Select strategy to load checklist.</div>
+              <span class="micro-hint">Tick all confluences that were present</span>
             </div>
-          </details>
+            <div id="confluenceChecklist" class="confluence-grid"></div>
+            <div id="confluenceSummary" class="confluence-summary muted-empty">Select strategy to load checklist.</div>
+          </div>
 
           <div class="upload-grid">
             <div class="field">
@@ -283,6 +274,32 @@
           <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
         </summary>
 
+        <article class="confluence-card settings-rules-card sync-card">
+          <div class="section-head section-head-tight">
+            <h3>Cloud Sync</h3>
+          </div>
+          <div class="sync-status-block">
+            <div id="syncStatusPill" class="sync-pill is-offline">Offline</div>
+            <div id="syncQueueHint" class="sync-human-hint">Your data is safe locally. 0 changes waiting to sync.</div>
+          </div>
+
+          <div class="settings-grid sync-grid">
+            <label class="field">
+              Account Email
+              <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email" />
+            </label>
+            <div class="field">
+              Actions
+              <div class="sync-action-row">
+                <button id="authSignIn" type="button" class="btn btn-ghost btn-tiny">Send Magic Link</button>
+                <button id="authSignOut" type="button" class="btn btn-ghost btn-tiny">Sign Out</button>
+                <button id="syncNowBtn" type="button" class="btn btn-primary btn-tiny">Sync Now</button>
+              </div>
+              <div id="authStatus" class="micro-hint">Not signed in</div>
+            </div>
+          </div>
+        </article>
+
         <div class="settings-grid">
           <label class="field settings-switch">
             Insight Reel
@@ -298,6 +315,20 @@
             </select>
           </label>
         </div>
+
+        <article class="confluence-card settings-rules-card">
+          <div class="section-head section-head-tight">
+            <h3>Sessions</h3>
+            <button id="settingsSaveSessions" type="button" class="btn btn-primary btn-tiny">Save Sessions</button>
+          </div>
+
+          <div id="settingsSessionEditor" class="settings-rule-editor"></div>
+
+          <div class="settings-strategy-add">
+            <input id="settingsNewSession" type="text" maxlength="24" placeholder="Add session (e.g. NY Lunch)" />
+            <button id="settingsAddSession" type="button" class="btn btn-ghost btn-tiny">Add Session</button>
+          </div>
+        </article>
 
         <article class="confluence-card settings-rules-card">
           <div class="section-head section-head-tight">
@@ -361,7 +392,7 @@
               </div>
             </label>
             <div class="field">Session
-              <div class="chip-row">
+              <div class="chip-row" id="editSessionChips">
                 <label class="chip"><input type="checkbox" name="editSession" value="London" /><span>London</span></label>
                 <label class="chip"><input type="checkbox" name="editSession" value="NY" /><span>NY</span></label>
                 <label class="chip"><input type="checkbox" name="editSession" value="Asian" /><span>Asian</span></label>
@@ -440,6 +471,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="app.js"></script>
   </body>
 </html>

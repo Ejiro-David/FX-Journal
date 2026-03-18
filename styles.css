@@ -275,6 +275,17 @@ h1 {
   border-color: rgba(96, 231, 255, 0.2);
 }
 
+:root[data-theme="dark"] .mini-btn {
+  background: rgba(24, 16, 47, 0.9);
+  border-color: rgba(96, 231, 255, 0.24);
+  color: #b9dff5;
+}
+
+:root[data-theme="dark"] .mini-btn:hover {
+  background: rgba(33, 22, 63, 0.94);
+  border-color: rgba(166, 123, 255, 0.56);
+}
+
 :root[data-theme="dark"] details.card[open] {
   border-color: rgba(166, 123, 255, 0.6);
   box-shadow: var(--shadow-strong);
@@ -282,6 +293,44 @@ h1 {
 
 :root[data-theme="dark"] .form-card {
   border-color: rgba(166, 123, 255, 0.58);
+}
+
+:root[data-theme="dark"] .entry-stage {
+  background: rgba(20, 13, 39, 0.82);
+  border-color: rgba(96, 231, 255, 0.25);
+}
+
+:root[data-theme="dark"] .entry-stage > summary {
+  color: #e7f8ff;
+}
+
+:root[data-theme="dark"] .entry-stage > summary::after {
+  color: rgba(159, 212, 239, 0.72);
+}
+
+:root[data-theme="dark"] .entry-stage-body {
+  border-top-color: rgba(96, 231, 255, 0.18);
+}
+
+:root[data-theme="dark"] .entry-stage.is-complete {
+  border-color: rgba(88, 213, 154, 0.36);
+}
+
+:root[data-theme="dark"] .entry-stage.is-complete > summary {
+  background: rgba(38, 136, 98, 0.2);
+}
+
+:root[data-theme="dark"] .entry-stage.is-ready > summary {
+  border-left-color: rgba(166, 123, 255, 0.66);
+}
+
+:root[data-theme="dark"] .entry-field-secondary.is-secondary input {
+  background: rgba(24, 16, 47, 0.66);
+  color: rgba(199, 179, 255, 0.75);
+}
+
+:root[data-theme="dark"] .entry-field-secondary.is-secondary input::placeholder {
+  color: rgba(159, 212, 239, 0.56);
 }
 
 :root[data-theme="dark"] .summary-title {
@@ -397,6 +446,34 @@ h1 {
   box-shadow: 0 4px 10px rgba(124, 90, 255, 0.28);
 }
 
+:root[data-theme="dark"] .trade-card.open-trade {
+  box-shadow: inset 0 0 0 999px rgba(214, 160, 58, 0.06);
+}
+
+:root[data-theme="dark"] .trade-row.open-trade {
+  background: linear-gradient(90deg, rgba(214, 160, 58, 0.12), rgba(24, 16, 47, 0.94) 42%);
+}
+
+:root[data-theme="dark"] .trade-img {
+  background: rgba(24, 16, 47, 0.86);
+}
+
+:root[data-theme="dark"] .sync-human-hint {
+  color: #b9dff5;
+}
+
+:root[data-theme="dark"] .sync-pill.is-synced {
+  color: #dffff2;
+  border-color: rgba(45, 203, 146, 0.62);
+  background: linear-gradient(180deg, rgba(31, 136, 101, 0.66), rgba(24, 92, 73, 0.76));
+}
+
+:root[data-theme="dark"] .sync-pill.is-pending {
+  color: #ffeaf2;
+  border-color: rgba(255, 124, 174, 0.64);
+  background: linear-gradient(180deg, rgba(181, 61, 111, 0.68), rgba(132, 42, 81, 0.76));
+}
+
 :root[data-theme="dark"] canvas {
   background: rgba(20, 13, 39, 0.86);
 }
@@ -460,6 +537,12 @@ details.card[open] {
   margin-bottom: 0.58rem;
 }
 
+#settings-card .settings-grid {
+  gap: 0.8rem 0.9rem;
+  margin-top: 0.28rem;
+  margin-bottom: 0.9rem;
+}
+
 .settings-switch-row {
   display: inline-flex;
   align-items: center;
@@ -482,8 +565,129 @@ details.card[open] {
   background: transparent;
 }
 
+.sync-grid {
+  margin-bottom: 0;
+}
+
+.sync-card {
+  border-color: rgba(98, 71, 232, 0.42);
+}
+
+#settings-card .sync-card {
+  padding: 0.7rem;
+  margin-bottom: 0.82rem;
+}
+
+.sync-status-block {
+  display: grid;
+  gap: 0.36rem;
+  margin-bottom: 0.56rem;
+}
+
+#settings-card .sync-status-block {
+  margin-bottom: 0.74rem;
+}
+
+.sync-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 34px;
+  border-radius: 12px;
+  border: 1px solid;
+  padding: 0.34rem 0.58rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 180ms ease;
+}
+
+.sync-pill.is-synced {
+  color: #0f5a3f;
+  border-color: rgba(31, 157, 113, 0.52);
+  background: linear-gradient(180deg, rgba(31, 157, 113, 0.24), rgba(31, 157, 113, 0.18));
+  box-shadow: 0 8px 18px rgba(31, 157, 113, 0.16);
+}
+
+.sync-pill.is-syncing {
+  color: #f5f0ff;
+  border-color: rgba(106, 147, 255, 0.66);
+  background: linear-gradient(130deg, rgba(127, 86, 255, 0.62), rgba(88, 142, 255, 0.56));
+  box-shadow: 0 10px 20px rgba(97, 102, 255, 0.24);
+  animation: syncPulse 1.7s ease-in-out infinite;
+}
+
+.sync-pill.is-offline {
+  color: #fff1f4;
+  border-color: rgba(212, 78, 117, 0.82);
+  background: linear-gradient(180deg, rgba(196, 39, 93, 0.82), rgba(154, 29, 74, 0.84));
+  box-shadow: 0 10px 20px rgba(160, 37, 82, 0.3);
+}
+
+.sync-pill.is-pending {
+  color: #7a1f3f;
+  border-color: rgba(212, 78, 117, 0.5);
+  background: linear-gradient(180deg, rgba(249, 181, 205, 0.66), rgba(236, 156, 187, 0.6));
+  box-shadow: 0 8px 16px rgba(212, 78, 117, 0.18);
+}
+
+.sync-pill.is-error {
+  color: #fff1f4;
+  border-color: rgba(212, 78, 117, 0.82);
+  background: linear-gradient(180deg, rgba(196, 39, 93, 0.82), rgba(154, 29, 74, 0.84));
+  box-shadow: 0 10px 20px rgba(160, 37, 82, 0.3);
+}
+
+.sync-human-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.sync-action-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+#settings-card .sync-action-row {
+  gap: 0.44rem;
+  margin-top: 0.14rem;
+  margin-bottom: 0.2rem;
+}
+
+.sync-action-row .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+@keyframes syncPulse {
+  0%, 100% {
+    box-shadow: 0 10px 20px rgba(97, 102, 255, 0.2);
+    filter: saturate(1);
+  }
+  50% {
+    box-shadow: 0 14px 24px rgba(97, 102, 255, 0.35);
+    filter: saturate(1.12);
+  }
+}
+
 .settings-rules-card {
   margin-top: 0.16rem;
+}
+
+#settings-card .settings-rules-card {
+  margin-top: 0.56rem;
+  padding: 0.68rem;
+}
+
+#settings-card .settings-rules-card > .micro-hint {
+  display: block;
+  margin-top: 0.52rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .settings-actions {
@@ -555,6 +759,11 @@ details.card[open] {
   color: var(--text);
 }
 
+.settings-session-text {
+  min-height: 34px;
+  resize: none;
+}
+
 .settings-rule-remove {
   width: 28px;
   height: 28px;
@@ -622,6 +831,110 @@ details.card[open] {
   background: rgba(255, 255, 255, 0.66);
 }
 
+#trade-form {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.entry-stage {
+  border: 1px solid rgba(110, 83, 208, 0.24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  overflow: hidden;
+}
+
+.entry-stage > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding: 0.56rem 0.62rem;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.entry-stage > summary::-webkit-details-marker {
+  display: none;
+}
+
+.entry-stage > summary::after {
+  content: "⌄";
+  color: var(--muted);
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.entry-stage[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.entry-stage-hint {
+  margin-left: auto;
+  padding-right: 0.12rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.entry-stage-body {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.56rem 0.62rem 0.62rem;
+  border-top: 1px solid rgba(110, 83, 208, 0.16);
+}
+
+.entry-stage.is-complete {
+  border-color: rgba(31, 157, 113, 0.3);
+}
+
+.entry-stage.is-complete > summary {
+  background: rgba(31, 157, 113, 0.08);
+}
+
+.entry-stage.is-ready > summary {
+  border-left: 3px solid rgba(98, 71, 232, 0.4);
+  padding-left: 0.5rem;
+}
+
+.stage-setup-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.execution-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.stage-note-field {
+  margin-top: 0.1rem;
+}
+
+.entry-field-secondary {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.entry-field-secondary.is-secondary {
+  opacity: 0.72;
+}
+
+.entry-field-secondary.is-secondary input {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.entry-field-secondary.is-secondary input::placeholder {
+  color: rgba(116, 104, 167, 0.5);
+}
+
+.entry-field-secondary.is-ready {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .upload-grid,
 .chart-grid {
   display: grid;
@@ -687,7 +1000,7 @@ textarea:focus,
   flex-wrap: wrap;
 }
 
-.chip { position: relative; }
+.chip { position: relative; display: inline-flex; cursor: pointer; user-select: none; }
 .chip input { position: absolute; opacity: 0; pointer-events: none; }
 .chip span {
   display: inline-flex;
@@ -697,12 +1010,27 @@ textarea:focus,
   background: rgba(255, 255, 255, 0.85);
   font-size: 0.76rem;
   color: var(--text);
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease, box-shadow 180ms ease, transform 140ms ease;
 }
 
 .chip input:checked + span {
-  background: var(--soft);
-  border-color: rgba(98, 71, 232, 0.5);
+  background: linear-gradient(180deg, rgba(126, 99, 255, 0.18), rgba(126, 99, 255, 0.14));
+  border-color: rgba(98, 71, 232, 0.72);
   color: var(--primary-2);
+  box-shadow:
+    0 0 0 2px rgba(123, 97, 255, 0.24),
+    0 6px 14px rgba(98, 71, 232, 0.2);
+  transform: translateY(-1px);
+}
+
+:root[data-theme="dark"] .chip input:checked + span {
+  background: linear-gradient(180deg, rgba(138, 102, 255, 0.35), rgba(104, 74, 235, 0.32));
+  border-color: rgba(148, 109, 255, 0.9);
+  color: #f3eaff;
+  box-shadow:
+    0 0 0 2px rgba(96, 231, 255, 0.26),
+    0 0 14px rgba(127, 86, 255, 0.35),
+    0 8px 18px rgba(8, 4, 25, 0.5);
 }
 
 .confluence-card {
@@ -1710,13 +2038,37 @@ canvas {
   .orbit-slide { width: min(82vw, 470px); }
   .orbit-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-strategy-add { flex-direction: column; align-items: stretch; }
+  #settings-card .sync-action-row { grid-template-columns: 1fr; }
+  #settings-card .settings-grid {
+    gap: 0.72rem;
+    margin-bottom: 0.8rem;
+  }
+  #settings-card .settings-rules-card {
+    margin-top: 0.5rem;
+  }
+  #settings-card .settings-rules-card > .micro-hint {
+    margin-top: 0.46rem;
+  }
 }
 
 @media (max-width: 640px) {
   .app-shell { width: 98vw; margin-top: 0.42rem; }
   .hero { align-items: flex-start; }
   .compact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stage-setup-grid,
+  .execution-grid {
+    grid-template-columns: 1fr;
+  }
   .upload-grid { grid-template-columns: 1fr; }
+  .entry-stage > summary {
+    padding: 0.5rem 0.56rem;
+  }
+  .entry-stage-hint {
+    font-size: 0.64rem;
+  }
+  .entry-stage-body {
+    padding: 0.52rem 0.56rem 0.58rem;
+  }
   .trade-img { height: 122px; }
   .btn { min-height: 34px; padding: 0.4rem 0.68rem; }
   .note-field { grid-column: span 1; }

@@ -53,6 +53,9 @@ Private, local-first forex trade journal focused on setup integrity, confluence 
   - `trades`
   - `images`
 - Legacy localStorage test data wipe flag is retained for migration safety.
+- Cloud sync queue/state is stored in localStorage keys:
+  - `lazyButDataSyncQueueV1`
+  - `lazyButDataSyncCursorV1`
 
 ## Project structure
 
@@ -60,6 +63,7 @@ Private, local-first forex trade journal focused on setup integrity, confluence 
 index.html
 styles.css
 app.js
+supabase-setup.sql
 README.md
 smoke.spec.js
 assets/
@@ -90,4 +94,5 @@ npx playwright test smoke.spec.js
 ## Notes
 
 - This is intentionally local-first and private by default.
-- For cross-device sync, a private backend can be added later (Supabase/Firebase/custom API).
+- Supabase sync is now wired in app UI (`Settings > Cloud Sync`).
+- Run `supabase-setup.sql` in Supabase SQL Editor before using cloud sync.

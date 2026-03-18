@@ -2,6 +2,12 @@ const DB_NAME = "lazyButDataV4";
 const DB_VERSION = 1;
 const TRADE_STORE = "trades";
 const IMAGE_STORE = "images";
+const CLOUD_SYNC_INTERVAL_MS = 15000;
+const SUPABASE_URL = "https://glvskwnsotlotzfjnssz.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_tsFYhQmml_1X_qPmmrfR3A_EstQOROS";
+const SUPABASE_TRADES_TABLE = "journal_trades";
+const SUPABASE_SETTINGS_TABLE = "journal_settings";
+const SUPABASE_IMAGE_BUCKET = "trade-images";
 
 const STORAGE_KEYS = {
   LEGACY_WIPE_FLAG: "lazyButDataLegacyWipedV4",
@@ -10,18 +16,23 @@ const STORAGE_KEYS = {
   PAIR_REGISTRY_KEY: "lazyButDataPairsV4",
   THEME_KEY: "lazyButDataThemeV1",
   SETTINGS_KEY: "lazyButDataSettingsV1",
+  SETTINGS_UPDATED_KEY: "lazyButDataSettingsUpdatedV1",
+  SYNC_QUEUE_KEY: "lazyButDataSyncQueueV1",
+  SYNC_CURSOR_KEY: "lazyButDataSyncCursorV1",
+  AUTH_EMAIL_KEY: "lazyButDataAuthEmailV1",
 };
 
 const ADD_PAIR_OPTION_VALUE = "__ADD_PAIR_OPTION__";
 
 const PAIRS = ["GBPUSD", "EURUSD", "USDJPY", "XAUUSD", "NAS100"];
 const OUTCOMES = ["Full Win", "Partial + BE", "Breakeven", "Full Loss"];
-const SESSION_OPTIONS = ["London", "NY", "Asian"];
+const DEFAULT_SESSION_OPTIONS = ["London", "NY", "Asian"];
 
 function createBaseSettings() {
   return {
     showInsightReel: true,
     strategyMode: "all",
+    sessionOptions: [...DEFAULT_SESSION_OPTIONS],
   };
 }
 
@@ -32,6 +43,10 @@ const {
   PAIR_REGISTRY_KEY,
   THEME_KEY,
   SETTINGS_KEY,
+  SETTINGS_UPDATED_KEY,
+  SYNC_QUEUE_KEY,
+  SYNC_CURSOR_KEY,
+  AUTH_EMAIL_KEY,
 } = STORAGE_KEYS;
 
 const DEFAULT_STRATEGIES = ["ICC", "SMC"];
@@ -347,6 +362,16 @@ function createIdbStorage(options = {}) {
     return id;
   }
 
+  async function dbPutImage(id, blob) {
+    if (!id || !blob) {
+      return;
+    }
+    const db = await openDb();
+    const tx = db.transaction(imageStore, "readwrite");
+    tx.objectStore(imageStore).put({ id, blob, created_at: new Date().toISOString() });
+    await txDone(tx);
+  }
+
   async function dbDeleteImage(id) {
     if (!id) {
       return;
@@ -398,10 +423,634 @@ function createIdbStorage(options = {}) {
     dbPutTrade,
     dbDeleteTrade,
     dbSaveImage,
+    dbPutImage,
     dbDeleteImage,
     dbGetImage,
     dbGetImages,
   };
+}
+
+function createSupabaseClient() {
+  const hasClientFactory = Boolean(window.supabase && typeof window.supabase.createClient === "function");
+  if (!hasClientFactory || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return null;
+  }
+  return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+}
+
+function loadSyncQueue() {
+  try {
+    const raw = localStorage.getItem(SYNC_QUEUE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function saveSyncQueue(queue) {
+  localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(Array.isArray(queue) ? queue : []));
+}
+
+function getSyncCursor() {
+  return localStorage.getItem(SYNC_CURSOR_KEY) || "";
+}
+
+function setSyncCursor(cursor) {
+  if (!cursor) {
+    return;
+  }
+  localStorage.setItem(SYNC_CURSOR_KEY, cursor);
+}
+
+function getSettingsUpdatedAt() {
+  return localStorage.getItem(SETTINGS_UPDATED_KEY) || "";
+}
+
+function setSettingsUpdatedAt(value) {
+  if (!value) {
+    return;
+  }
+  localStorage.setItem(SETTINGS_UPDATED_KEY, value);
+}
+
+function queueSyncOperation(operation) {
+  if (!operation || !operation.type) {
+    return;
+  }
+
+  const next = {
+    type: operation.type,
+    queued_at: operation.queued_at || new Date().toISOString(),
+    trade_id: operation.trade_id || null,
+    image_id: operation.image_id || null,
+    updated_at: operation.updated_at || new Date().toISOString(),
+    retry_count: Number(operation.retry_count || 0),
+  };
+
+  let queue = loadSyncQueue();
+  if (next.type === "settings_upsert") {
+    queue = queue.filter((item) => item.type !== "settings_upsert");
+  }
+  if (next.type === "trade_upsert" || next.type === "trade_delete") {
+    queue = queue.filter((item) => !(item.trade_id && item.trade_id === next.trade_id && (item.type === "trade_upsert" || item.type === "trade_delete")));
+  }
+  if (next.type === "image_upload" || next.type === "image_delete") {
+    queue = queue.filter((item) => !(item.image_id && item.image_id === next.image_id && (item.type === "image_upload" || item.type === "image_delete")));
+  }
+
+  queue.push(next);
+  saveSyncQueue(queue);
+  updateCloudSyncUi();
+  scheduleCloudSync(850);
+}
+
+function scheduleCloudSync(delayMs = 0) {
+  if (!supabaseClient) {
+    return;
+  }
+  window.clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = window.setTimeout(() => {
+    runCloudSync().catch((error) => {
+      console.error(error);
+    });
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+function buildImageStoragePath(userId, imageId) {
+  return `${userId}/${imageId}`;
+}
+
+function updateCloudSyncUi() {
+  const queue = loadSyncQueue();
+  const pending = queue.length;
+  const pendingLabel = `${pending} ${pending === 1 ? "change" : "changes"}`;
+
+  if (syncQueueHintEl) {
+    syncQueueHintEl.textContent = `Your data is safe locally. ${pendingLabel} waiting to sync.`;
+  }
+
+  if (authStatusEl) {
+    authStatusEl.textContent = authUser?.email ? `Signed in as ${authUser.email}` : "Not signed in";
+  }
+
+  if (authSignOutBtn) {
+    authSignOutBtn.disabled = !authUser || isCloudSyncing;
+  }
+  if (authSignInBtn) {
+    authSignInBtn.disabled = isCloudSyncing;
+  }
+  if (syncNowBtn) {
+    syncNowBtn.disabled = !authUser || isCloudSyncing;
+  }
+
+  if (!syncStatusPillEl) {
+    return;
+  }
+
+  let className = "sync-pill is-offline";
+  let label = "Offline";
+
+  if (!supabaseClient) {
+    className = "sync-pill is-error";
+    label = "Cloud Unavailable";
+  } else if (!authUser) {
+    className = "sync-pill is-offline";
+    label = "Offline";
+  } else if (isCloudSyncing) {
+    className = "sync-pill is-syncing";
+    label = "Syncing";
+  } else if (!navigator.onLine) {
+    className = "sync-pill is-offline";
+    label = "Offline";
+  } else if (cloudSyncError) {
+    className = "sync-pill is-error";
+    label = "Sync Error";
+  } else if (pending > 0) {
+    className = "sync-pill is-pending";
+    label = "Pending Changes";
+  } else {
+    className = "sync-pill is-synced";
+    label = "Synced";
+  }
+
+  syncStatusPillEl.className = className;
+  syncStatusPillEl.textContent = label;
+}
+
+function getTradeById(tradeId) {
+  return trades.find((trade) => trade.id === tradeId) || null;
+}
+
+async function saveTradeRecord(trade, options = {}) {
+  const { enqueue = true } = options;
+  await dbPutTrade(trade);
+  if (enqueue) {
+    queueSyncOperation({
+      type: "trade_upsert",
+      trade_id: trade.id,
+      updated_at: trade.updated_at || new Date().toISOString(),
+    });
+  }
+}
+
+async function deleteTradeRecord(tradeId, options = {}) {
+  const { enqueue = true } = options;
+  await dbDeleteTrade(tradeId);
+  if (enqueue) {
+    queueSyncOperation({
+      type: "trade_delete",
+      trade_id: tradeId,
+      updated_at: new Date().toISOString(),
+    });
+  }
+}
+
+async function saveImageRecord(blob, options = {}) {
+  const { enqueue = true } = options;
+  const imageId = await dbSaveImage(blob);
+  if (enqueue) {
+    queueSyncOperation({
+      type: "image_upload",
+      image_id: imageId,
+    });
+  }
+  return imageId;
+}
+
+async function putImageRecord(imageId, blob, options = {}) {
+  const { enqueue = false } = options;
+  await dbPutImage(imageId, blob);
+  if (enqueue) {
+    queueSyncOperation({
+      type: "image_upload",
+      image_id: imageId,
+    });
+  }
+}
+
+async function deleteImageRecord(imageId, options = {}) {
+  const { enqueue = true } = options;
+  await dbDeleteImage(imageId);
+  if (enqueue && imageId) {
+    queueSyncOperation({
+      type: "image_delete",
+      image_id: imageId,
+    });
+  }
+}
+
+async function initCloudSync() {
+  if (authEmailEl) {
+    authEmailEl.value = localStorage.getItem(AUTH_EMAIL_KEY) || "";
+  }
+
+  if (!supabaseClient) {
+    updateCloudSyncUi();
+    return;
+  }
+
+  const {
+    data: { session },
+    error,
+  } = await supabaseClient.auth.getSession();
+  if (error) {
+    console.error(error);
+  }
+  authUser = session?.user || null;
+  cloudSyncError = "";
+  updateCloudSyncUi();
+
+  supabaseClient.auth.onAuthStateChange((_event, nextSession) => {
+    authUser = nextSession?.user || null;
+    cloudSyncError = "";
+    updateCloudSyncUi();
+    if (authUser) {
+      scheduleCloudSync(200);
+    }
+  });
+
+  window.addEventListener("online", () => {
+    cloudSyncError = "";
+    updateCloudSyncUi();
+    scheduleCloudSync(120);
+  });
+  window.addEventListener("offline", updateCloudSyncUi);
+
+  window.setInterval(() => {
+    runCloudSync().catch((syncError) => {
+      console.error(syncError);
+    });
+  }, CLOUD_SYNC_INTERVAL_MS);
+
+  if (authUser) {
+    scheduleCloudSync(300);
+  }
+}
+
+async function sendMagicLinkSignIn() {
+  if (!supabaseClient) {
+    showToast("Cloud sync unavailable", "bad");
+    return;
+  }
+  const email = String(authEmailEl?.value || "").trim().toLowerCase();
+  if (!email || !email.includes("@")) {
+    showToast("Enter a valid email", "bad");
+    return;
+  }
+
+  localStorage.setItem(AUTH_EMAIL_KEY, email);
+  const redirectTo = `${window.location.origin}${window.location.pathname}`;
+  const { error } = await supabaseClient.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: redirectTo },
+  });
+  if (error) {
+    throw error;
+  }
+  showToast("Magic link sent. Check your inbox.", "ok");
+}
+
+async function signOutCloudSync() {
+  if (!supabaseClient) {
+    return;
+  }
+  const { error } = await supabaseClient.auth.signOut();
+  if (error) {
+    throw error;
+  }
+  authUser = null;
+  updateCloudSyncUi();
+}
+
+async function runCloudSync(options = {}) {
+  const { showFeedback = false } = options;
+  if (!supabaseClient || !authUser || !navigator.onLine || isCloudSyncing) {
+    updateCloudSyncUi();
+    return;
+  }
+
+  isCloudSyncing = true;
+  cloudSyncError = "";
+  updateCloudSyncUi();
+
+  try {
+    ensureInitialCloudSeedQueue();
+    await pushCloudQueue();
+    await pullCloudSettings();
+    await pullCloudTrades();
+    if (showFeedback) {
+      showToast("Cloud sync complete", "ok");
+    }
+  } catch (error) {
+    cloudSyncError = error?.message || "Cloud sync failed";
+    if (showFeedback) {
+      showToast(cloudSyncError, "bad");
+    }
+    throw error;
+  } finally {
+    isCloudSyncing = false;
+    updateCloudSyncUi();
+  }
+}
+
+function ensureInitialCloudSeedQueue() {
+  if (!authUser) {
+    return;
+  }
+  const hasCursor = Boolean(getSyncCursor());
+  const queue = loadSyncQueue();
+  if (hasCursor || queue.length || !trades.length) {
+    return;
+  }
+
+  const seededQueue = [...queue];
+  trades.forEach((trade) => {
+    seededQueue.push({
+      type: "trade_upsert",
+      trade_id: trade.id,
+      updated_at: trade.updated_at || new Date().toISOString(),
+      queued_at: new Date().toISOString(),
+      retry_count: 0,
+    });
+
+    if (trade.before_image_id) {
+      seededQueue.push({
+        type: "image_upload",
+        image_id: trade.before_image_id,
+        queued_at: new Date().toISOString(),
+        retry_count: 0,
+      });
+    }
+    if (trade.after_image_id) {
+      seededQueue.push({
+        type: "image_upload",
+        image_id: trade.after_image_id,
+        queued_at: new Date().toISOString(),
+        retry_count: 0,
+      });
+    }
+  });
+  seededQueue.push({
+    type: "settings_upsert",
+    updated_at: getSettingsUpdatedAt() || new Date().toISOString(),
+    queued_at: new Date().toISOString(),
+    retry_count: 0,
+  });
+
+  saveSyncQueue(seededQueue);
+  updateCloudSyncUi();
+}
+
+async function pushCloudQueue() {
+  if (!supabaseClient || !authUser) {
+    return;
+  }
+  const queue = loadSyncQueue();
+  if (!queue.length) {
+    return;
+  }
+
+  const remaining = [...queue];
+  while (remaining.length) {
+    const operation = remaining[0];
+    try {
+      await applyCloudQueueOperation(operation);
+      remaining.shift();
+      saveSyncQueue(remaining);
+      updateCloudSyncUi();
+    } catch (error) {
+      operation.retry_count = Number(operation.retry_count || 0) + 1;
+      remaining[0] = operation;
+      saveSyncQueue(remaining);
+      throw error;
+    }
+  }
+}
+
+async function applyCloudQueueOperation(operation) {
+  if (!supabaseClient || !authUser) {
+    return;
+  }
+
+  if (operation.type === "trade_upsert") {
+    const trade = getTradeById(operation.trade_id);
+    if (!trade) {
+      return;
+    }
+    const { error } = await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert(
+      {
+        id: trade.id,
+        user_id: authUser.id,
+        trade,
+        updated_at: trade.updated_at || new Date().toISOString(),
+        deleted_at: null,
+      },
+      { onConflict: "id" }
+    );
+    if (error) {
+      throw error;
+    }
+    return;
+  }
+
+  if (operation.type === "trade_delete") {
+    const deletedAt = operation.updated_at || new Date().toISOString();
+    const { error } = await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert(
+      {
+        id: operation.trade_id,
+        user_id: authUser.id,
+        trade: null,
+        updated_at: deletedAt,
+        deleted_at: deletedAt,
+      },
+      { onConflict: "id" }
+    );
+    if (error) {
+      throw error;
+    }
+    return;
+  }
+
+  if (operation.type === "settings_upsert") {
+    const { error } = await supabaseClient.from(SUPABASE_SETTINGS_TABLE).upsert(
+      {
+        user_id: authUser.id,
+        settings: appSettings,
+        updated_at: getSettingsUpdatedAt() || new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    );
+    if (error) {
+      throw error;
+    }
+    return;
+  }
+
+  if (operation.type === "image_upload") {
+    await syncImageBlobToCloud(operation.image_id);
+    return;
+  }
+
+  if (operation.type === "image_delete") {
+    await removeImageFromCloud(operation.image_id);
+  }
+}
+
+async function syncImageBlobToCloud(imageId) {
+  if (!imageId || !supabaseClient || !authUser) {
+    return;
+  }
+  const blob = await dbGetImage(imageId);
+  if (!blob) {
+    return;
+  }
+  const path = buildImageStoragePath(authUser.id, imageId);
+  const { error } = await supabaseClient.storage.from(SUPABASE_IMAGE_BUCKET).upload(path, blob, {
+    upsert: true,
+    contentType: blob.type || "image/jpeg",
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+async function removeImageFromCloud(imageId) {
+  if (!imageId || !supabaseClient || !authUser) {
+    return;
+  }
+  const path = buildImageStoragePath(authUser.id, imageId);
+  const { error } = await supabaseClient.storage.from(SUPABASE_IMAGE_BUCKET).remove([path]);
+  if (error) {
+    throw error;
+  }
+}
+
+async function fetchImageFromCloud(imageId) {
+  if (!imageId || !supabaseClient || !authUser) {
+    return null;
+  }
+  const path = buildImageStoragePath(authUser.id, imageId);
+  const { data, error } = await supabaseClient.storage.from(SUPABASE_IMAGE_BUCKET).download(path);
+  if (error || !data) {
+    return null;
+  }
+  return data;
+}
+
+async function pullCloudTrades() {
+  if (!supabaseClient || !authUser) {
+    return;
+  }
+  const cursor = getSyncCursor();
+  let query = supabaseClient
+    .from(SUPABASE_TRADES_TABLE)
+    .select("id, trade, updated_at, deleted_at")
+    .eq("user_id", authUser.id)
+    .order("updated_at", { ascending: true })
+    .limit(1000);
+
+  if (cursor) {
+    query = query.gt("updated_at", cursor);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw error;
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    return;
+  }
+
+  let hasTradeChanges = false;
+  let latestCursor = cursor;
+
+  for (const row of data) {
+    latestCursor = row.updated_at || latestCursor;
+    const localIndex = trades.findIndex((trade) => trade.id === row.id);
+    if (row.deleted_at) {
+      if (localIndex !== -1) {
+        const localTrade = trades[localIndex];
+        if (localTrade.before_image_id) {
+          await deleteImageRecord(localTrade.before_image_id, { enqueue: false });
+        }
+        if (localTrade.after_image_id) {
+          await deleteImageRecord(localTrade.after_image_id, { enqueue: false });
+        }
+        await deleteTradeRecord(row.id, { enqueue: false });
+        trades.splice(localIndex, 1);
+        hasTradeChanges = true;
+      }
+      continue;
+    }
+
+    if (!row.trade || typeof row.trade !== "object") {
+      continue;
+    }
+
+    const remoteTrade = normalizeTrade({
+      ...row.trade,
+      id: row.id,
+      updated_at: row.updated_at || row.trade.updated_at,
+    });
+    const localTrade = localIndex === -1 ? null : trades[localIndex];
+    if (!localTrade || toMillis(remoteTrade.updated_at) >= toMillis(localTrade.updated_at)) {
+      if (localIndex === -1) {
+        trades.unshift(remoteTrade);
+      } else {
+        trades[localIndex] = remoteTrade;
+      }
+      await saveTradeRecord(remoteTrade, { enqueue: false });
+      hasTradeChanges = true;
+    }
+  }
+
+  setSyncCursor(latestCursor);
+
+  if (hasTradeChanges) {
+    syncPairRegistryFromTrades(trades);
+    refreshPairSelectors();
+    renderAll();
+  }
+}
+
+async function pullCloudSettings() {
+  if (!supabaseClient || !authUser) {
+    return;
+  }
+  const { data, error } = await supabaseClient
+    .from(SUPABASE_SETTINGS_TABLE)
+    .select("settings, updated_at")
+    .eq("user_id", authUser.id)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  if (!data || !data.settings) {
+    return;
+  }
+
+  const remoteUpdatedAt = data.updated_at || "";
+  const localUpdatedAt = getSettingsUpdatedAt();
+  if (remoteUpdatedAt && toMillis(remoteUpdatedAt) <= toMillis(localUpdatedAt)) {
+    return;
+  }
+
+  appSettings = normalizeSettings(data.settings);
+  settingsRuleDraft = cloneConfluenceRules(appSettings.confluenceRules);
+  settingsSessionDraft = [...getConfiguredSessions()];
+  saveAppSettings({ enqueue: false, updatedAt: remoteUpdatedAt || new Date().toISOString() });
+  applySettingsUi();
 }
 
 function parsePnl(rawValue) {
@@ -839,6 +1488,7 @@ const noteEl = document.getElementById("note");
 const createConfluenceDetailsEl = document.getElementById("createConfluenceDetails");
 const confluenceChecklistEl = document.getElementById("confluenceChecklist");
 const confluenceSummaryEl = document.getElementById("confluenceSummary");
+const entryPnlFieldEl = document.getElementById("entryPnlField");
 
 const beforeZone = document.getElementById("beforeZone");
 const afterZone = document.getElementById("afterZone");
@@ -861,12 +1511,25 @@ const filterSessionEl = document.getElementById("filterSession");
 const filterOutcomeEl = document.getElementById("filterOutcome");
 const filterStrategyEl = document.getElementById("filterStrategy");
 const filterIntegrityEl = document.getElementById("filterIntegrity");
+const sessionChipsEl = document.getElementById("sessionChips");
+const editSessionChipsEl = document.getElementById("editSessionChips");
 
 const settingShowInsightReelEl = document.getElementById("settingShowInsightReel");
 const settingStrategyModeEl = document.getElementById("settingStrategyMode");
+const authEmailEl = document.getElementById("authEmail");
+const authSignInBtn = document.getElementById("authSignIn");
+const authSignOutBtn = document.getElementById("authSignOut");
+const syncNowBtn = document.getElementById("syncNowBtn");
+const authStatusEl = document.getElementById("authStatus");
+const syncQueueHintEl = document.getElementById("syncQueueHint");
+const syncStatusPillEl = document.getElementById("syncStatusPill");
 const settingsStrategyTabsEl = document.getElementById("settingsStrategyTabs");
 const settingsNewStrategyEl = document.getElementById("settingsNewStrategy");
 const settingsAddStrategyBtn = document.getElementById("settingsAddStrategy");
+const settingsNewSessionEl = document.getElementById("settingsNewSession");
+const settingsAddSessionBtn = document.getElementById("settingsAddSession");
+const settingsSessionEditorEl = document.getElementById("settingsSessionEditor");
+const settingsSaveSessionsBtn = document.getElementById("settingsSaveSessions");
 const settingsRuleEditorEl = document.getElementById("settingsRuleEditor");
 const settingsSaveRulesBtn = document.getElementById("settingsSaveRules");
 const settingsResetRulesBtn = document.getElementById("settingsResetRules");
@@ -920,11 +1583,13 @@ const storage = createIdbStorage({
   tradeStore: TRADE_STORE,
   imageStore: IMAGE_STORE,
 });
+const supabaseClient = createSupabaseClient();
 const {
   dbGetAllTrades,
   dbPutTrade,
   dbDeleteTrade,
   dbSaveImage,
+  dbPutImage,
   dbDeleteImage,
   dbGetImage,
   dbGetImages,
@@ -939,9 +1604,14 @@ let editManualTimeEnabled = false;
 let isRenderingHistory = false;
 let analyticsCarousel = null;
 let pairRegistry = [];
+let authUser = null;
+let isCloudSyncing = false;
+let cloudSyncTimer = 0;
+let cloudSyncError = "";
 let appSettings = createDefaultSettings();
 let settingsEditorStrategy = DEFAULT_STRATEGIES[0];
 let settingsRuleDraft = cloneConfluenceRules(CONFLUENCE_RULES);
+let settingsSessionDraft = [...DEFAULT_SESSION_OPTIONS];
 
 const chartRegistry = new Map();
 const createChart = (id, config) => createChartWithRegistry(id, config, chartRegistry);
@@ -980,9 +1650,11 @@ async function init() {
   bootstrapPairRegistry();
   refreshPairSelectors();
   refreshStrategySelectors();
+  refreshSessionSelectors();
   fillTimeSuggestions();
   applyDefaultDateTime();
   applySavedDefaults();
+  syncEntryFlowState({ forceChecklistRerender: true });
 
   analyticsCard.open = false;
   historyCard.open = false;
@@ -993,7 +1665,10 @@ async function init() {
   await loadTradesFromDb();
   syncPairRegistryFromTrades(trades);
   refreshPairSelectors();
+  refreshSessionSelectors();
+  syncEntryFlowState();
   renderAll();
+  await initCloudSync();
 }
 
 function bindEvents() {
@@ -1023,10 +1698,45 @@ function bindEvents() {
       appSettings.strategyMode = mode;
       saveAppSettings();
       refreshStrategySelectors();
-      renderCreateConfluenceChecklist();
-      updateCreateConfluenceSummary();
+      syncEntryFlowState({ forceChecklistRerender: true });
       renderAll();
       showToast(`Strategy mode: ${appSettings.strategyMode === "all" ? "All" : appSettings.strategyMode}`, "ok");
+    });
+  }
+  if (authSignInBtn) {
+    authSignInBtn.addEventListener("click", async () => {
+      try {
+        await sendMagicLinkSignIn();
+      } catch (error) {
+        console.error(error);
+        showToast(error?.message || "Sign-in failed", "bad");
+      }
+    });
+  }
+  if (authSignOutBtn) {
+    authSignOutBtn.addEventListener("click", async () => {
+      try {
+        await signOutCloudSync();
+        showToast("Signed out", "ok");
+      } catch (error) {
+        console.error(error);
+        showToast(error?.message || "Sign-out failed", "bad");
+      }
+    });
+  }
+  if (syncNowBtn) {
+    syncNowBtn.addEventListener("click", async () => {
+      try {
+        await runCloudSync({ showFeedback: true });
+      } catch (error) {
+        console.error(error);
+      }
+    });
+  }
+  if (authEmailEl) {
+    authEmailEl.addEventListener("change", () => {
+      const email = String(authEmailEl.value || "").trim().toLowerCase();
+      localStorage.setItem(AUTH_EMAIL_KEY, email);
     });
   }
   if (settingsStrategyTabsEl) {
@@ -1061,6 +1771,53 @@ function bindEvents() {
       event.preventDefault();
       addStrategyFromSettings(settingsNewStrategyEl.value);
     });
+  }
+  if (settingsAddSessionBtn) {
+    settingsAddSessionBtn.addEventListener("click", () => {
+      addSessionFromSettings(settingsNewSessionEl?.value);
+    });
+  }
+  if (settingsNewSessionEl) {
+    settingsNewSessionEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      addSessionFromSettings(settingsNewSessionEl.value);
+    });
+  }
+  if (settingsSessionEditorEl) {
+    settingsSessionEditorEl.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || !target.matches("[data-session-index]")) {
+        return;
+      }
+      const index = Number(target.dataset.sessionIndex);
+      if (!Number.isInteger(index) || index < 0 || index >= settingsSessionDraft.length) {
+        return;
+      }
+      settingsSessionDraft[index] = target.value;
+    });
+
+    settingsSessionEditorEl.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const removeButton = target.closest("[data-remove-session-index]");
+      if (!removeButton) {
+        return;
+      }
+      const index = Number(removeButton.getAttribute("data-remove-session-index"));
+      if (!Number.isInteger(index) || index < 0 || index >= settingsSessionDraft.length) {
+        return;
+      }
+      settingsSessionDraft.splice(index, 1);
+      renderSettingsSessionEditor();
+    });
+  }
+  if (settingsSaveSessionsBtn) {
+    settingsSaveSessionsBtn.addEventListener("click", saveSettingsSessions);
   }
   if (settingsRuleEditorEl) {
     settingsRuleEditorEl.addEventListener("input", (event) => {
@@ -1132,14 +1889,15 @@ function bindEvents() {
   }
 
   manualTimeToggleEl.addEventListener("click", toggleEntryManualTime);
+  bindChipToggle(sessionChipsEl, "session");
+  bindChipToggle(editSessionChipsEl, "editSession");
   strategyEl.addEventListener("change", () => {
-    renderCreateConfluenceChecklist();
-    updateCreateConfluenceSummary();
-    if (strategyEl.value && createConfluenceDetailsEl && !createConfluenceDetailsEl.open) {
-      createConfluenceDetailsEl.open = true;
-    }
+    syncEntryFlowState({ forceChecklistRerender: true });
   });
-  confluenceChecklistEl.addEventListener("change", updateCreateConfluenceSummary);
+  outcomeEl.addEventListener("change", syncEntryFlowState);
+  confluenceChecklistEl.addEventListener("change", syncEntryFlowState);
+  form.addEventListener("input", syncEntryFlowState);
+  form.addEventListener("change", syncEntryFlowState);
 
   [filterPairEl, filterSessionEl, filterOutcomeEl, filterStrategyEl, filterIntegrityEl].forEach((el) => {
     el.addEventListener("change", () => {
@@ -1202,6 +1960,33 @@ function bindEvents() {
   editForm.addEventListener("submit", handleEditSubmit);
 }
 
+function bindChipToggle(containerEl, inputName) {
+  if (!containerEl) {
+    return;
+  }
+
+  containerEl.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    const chip = target.closest(".chip");
+    if (!chip || !containerEl.contains(chip)) {
+      return;
+    }
+
+    const input = chip.querySelector(`input[name="${inputName}"]`);
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    input.checked = !input.checked;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
 function wipeLegacyTestData() {
   if (localStorage.getItem(LEGACY_WIPE_FLAG)) {
     return;
@@ -1224,9 +2009,11 @@ function bindDropZones() {
     clearBeforeBtn,
     (blob) => {
       createImages.beforeBlob = blob;
+      syncEntryFlowState();
     },
     () => {
       createImages.beforeBlob = null;
+      syncEntryFlowState();
     }
   );
 
@@ -1237,9 +2024,11 @@ function bindDropZones() {
     clearAfterBtn,
     (blob) => {
       createImages.afterBlob = blob;
+      syncEntryFlowState();
     },
     () => {
       createImages.afterBlob = null;
+      syncEntryFlowState();
     }
   );
 
@@ -1656,29 +2445,73 @@ function applyDefaultDateTime() {
 
 function applySavedDefaults() {
   const defaults = loadDefaults();
-  if (!defaults) {
-    return;
+  if (defaults) {
+    if (defaults.pair) {
+      registerPair(defaults.pair);
+      pairEl.value = normalizePairCode(defaults.pair);
+      pairEl.dataset.prevPair = normalizePairCode(defaults.pair);
+    }
+    if (defaults.direction) {
+      directionEl.value = defaults.direction;
+    }
+    if (defaults.lotSize) {
+      lotSizeEl.value = defaults.lotSize;
+    }
+    if (defaults.strategy && getAllowedStrategies().includes(defaults.strategy)) {
+      strategyEl.value = defaults.strategy;
+    }
   }
-  if (defaults.pair) {
-    registerPair(defaults.pair);
-    pairEl.value = normalizePairCode(defaults.pair);
-    pairEl.dataset.prevPair = normalizePairCode(defaults.pair);
-  }
-  if (defaults.direction) {
-    directionEl.value = defaults.direction;
-  }
-  if (defaults.lotSize) {
-    lotSizeEl.value = defaults.lotSize;
-  }
-  if (defaults.strategy && getAllowedStrategies().includes(defaults.strategy)) {
-    strategyEl.value = defaults.strategy;
-  } else if (getAllowedStrategies().length === 1) {
+
+  if (getAllowedStrategies().length === 1) {
     strategyEl.value = getAllowedStrategies()[0];
   }
-  renderCreateConfluenceChecklist();
-  updateCreateConfluenceSummary();
+
+  syncEntryFlowState({ forceChecklistRerender: true });
+}
+
+function syncEntryFlowState(options = {}) {
+  const { forceChecklistRerender = false } = options;
+  const outcomeSelected = Boolean(String(outcomeEl?.value || "").trim());
+  const strategySelected = Boolean(String(strategyEl?.value || "").trim());
+
+  if (entryPnlFieldEl && pnlEl) {
+    pnlEl.disabled = !outcomeSelected;
+    entryPnlFieldEl.classList.toggle("is-secondary", !outcomeSelected);
+    entryPnlFieldEl.classList.toggle("is-ready", outcomeSelected);
+    if (!outcomeSelected) {
+      if (String(pnlEl.value || "").trim()) {
+        pnlEl.value = "";
+      }
+      pnlEl.placeholder = "Set outcome to enter PnL";
+    } else {
+      pnlEl.placeholder = "+3.50 or -1.20";
+    }
+  }
+
   if (createConfluenceDetailsEl) {
-    createConfluenceDetailsEl.open = false;
+    createConfluenceDetailsEl.hidden = !strategySelected;
+  }
+  if (strategySelected) {
+    const renderedForStrategy = String(confluenceChecklistEl?.dataset?.strategy || "");
+    const selectedStrategy = String(strategyEl.value || "");
+    const shouldRenderChecklist =
+      forceChecklistRerender ||
+      renderedForStrategy !== selectedStrategy ||
+      !confluenceChecklistEl ||
+      confluenceChecklistEl.children.length === 0;
+
+    if (shouldRenderChecklist) {
+      renderCreateConfluenceChecklist();
+      if (confluenceChecklistEl) {
+        confluenceChecklistEl.dataset.strategy = selectedStrategy;
+      }
+    }
+    updateCreateConfluenceSummary();
+  } else {
+    confluenceChecklistEl.innerHTML = "";
+    confluenceChecklistEl.dataset.strategy = "";
+    confluenceSummaryEl.textContent = "Select strategy to load checklist.";
+    confluenceSummaryEl.className = "confluence-summary muted-empty";
   }
 }
 
@@ -1729,8 +2562,7 @@ function handleClear(options = {}) {
   createBeforeBinder.clearSilent();
   createAfterBinder.clearSilent();
 
-  renderCreateConfluenceChecklist();
-  updateCreateConfluenceSummary();
+  syncEntryFlowState({ forceChecklistRerender: true });
 
   errorEl.textContent = "";
   if (shouldShowToast) {
@@ -1759,8 +2591,68 @@ function createDefaultSettings() {
   return {
     showInsightReel: true,
     strategyMode: "all",
+    sessionOptions: [...DEFAULT_SESSION_OPTIONS],
     confluenceRules: cloneConfluenceRules(CONFLUENCE_RULES),
   };
+}
+
+function normalizeSessionName(value) {
+  const normalized = String(value || "").trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+  return normalized.slice(0, 24);
+}
+
+function orderSessions(list) {
+  const unique = [];
+  const seen = new Set();
+
+  (Array.isArray(list) ? list : []).forEach((item) => {
+    const session = normalizeSessionName(item);
+    if (!session) {
+      return;
+    }
+    const key = session.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    unique.push(session);
+  });
+
+  const coreSet = new Set(DEFAULT_SESSION_OPTIONS.map((item) => item.toLowerCase()));
+  const coreOrdered = DEFAULT_SESSION_OPTIONS.filter((session) =>
+    unique.some((item) => item.toLowerCase() === session.toLowerCase())
+  );
+  const customOrdered = unique
+    .filter((session) => !coreSet.has(session.toLowerCase()))
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+
+  return [...coreOrdered, ...customOrdered];
+}
+
+function getSessionUniverse(options = {}) {
+  const {
+    rows = trades,
+    includeTradeSessions = true,
+    configuredSessions = appSettings?.sessionOptions || DEFAULT_SESSION_OPTIONS,
+  } = options;
+
+  const candidates = [...configuredSessions];
+  if (includeTradeSessions && Array.isArray(rows)) {
+    rows.forEach((trade) => {
+      (Array.isArray(trade?.sessions) ? trade.sessions : []).forEach((session) => {
+        candidates.push(session);
+      });
+    });
+  }
+  const ordered = orderSessions(candidates);
+  return ordered.length ? ordered : [...DEFAULT_SESSION_OPTIONS];
+}
+
+function getConfiguredSessions() {
+  return getSessionUniverse({ rows: [], includeTradeSessions: false });
 }
 
 function normalizeStrategyName(value) {
@@ -1919,6 +2811,7 @@ function normalizeSettings(rawSettings) {
   }
 
   const confluenceRules = normalizeConfluenceRulesMap(rawSettings.confluenceRules);
+  const sessionOptions = orderSessions(rawSettings.sessionOptions);
   const strategyMode = normalizeStrategyMode(rawSettings.strategyMode, {
     strategies: Object.keys(confluenceRules),
   });
@@ -1926,6 +2819,7 @@ function normalizeSettings(rawSettings) {
   return {
     showInsightReel: rawSettings.showInsightReel !== false,
     strategyMode,
+    sessionOptions,
     confluenceRules,
   };
 }
@@ -1938,29 +2832,41 @@ function loadAppSettings() {
     appSettings = createDefaultSettings();
   }
   settingsRuleDraft = cloneConfluenceRules(appSettings.confluenceRules);
+  settingsSessionDraft = [...getConfiguredSessions()];
   const availableStrategies = getDraftStrategies();
   settingsEditorStrategy = availableStrategies.includes(settingsEditorStrategy)
     ? settingsEditorStrategy
     : (availableStrategies[0] || "");
+  if (!getSettingsUpdatedAt()) {
+    setSettingsUpdatedAt(new Date().toISOString());
+  }
   renderSettingsPanel();
 }
 
-function saveAppSettings() {
+function saveAppSettings(options = {}) {
+  const { enqueue = true, updatedAt = new Date().toISOString() } = options;
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(appSettings));
+  setSettingsUpdatedAt(updatedAt);
+  if (enqueue) {
+    queueSyncOperation({
+      type: "settings_upsert",
+      updated_at: updatedAt,
+    });
+  }
 }
 
 function applySettingsUi(options = {}) {
   const { rerender = true } = options;
   applyInsightReelVisibility();
   refreshStrategySelectors();
+  refreshSessionSelectors();
   renderSettingsPanel();
 
   if (!rerender) {
     return;
   }
 
-  renderCreateConfluenceChecklist();
-  updateCreateConfluenceSummary();
+  syncEntryFlowState({ forceChecklistRerender: true });
   renderAll();
 }
 
@@ -2056,6 +2962,76 @@ function refreshStrategySelectors() {
   fillStrategyFilter(filterStrategyEl.value);
 }
 
+function matchSessionSelection(options, selectedValues) {
+  const selectedSet = new Set((Array.isArray(selectedValues) ? selectedValues : []).map((item) => String(item).toLowerCase()));
+  return options.filter((session) => selectedSet.has(session.toLowerCase()));
+}
+
+function getSessionOptionsForInput(selectedValues = []) {
+  const configured = getConfiguredSessions();
+  const extras = [];
+  const configuredSet = new Set(configured.map((session) => session.toLowerCase()));
+
+  (Array.isArray(selectedValues) ? selectedValues : []).forEach((item) => {
+    const session = normalizeSessionName(item);
+    if (!session) {
+      return;
+    }
+    const key = session.toLowerCase();
+    if (configuredSet.has(key) || extras.some((entry) => entry.toLowerCase() === key)) {
+      return;
+    }
+    extras.push(session);
+  });
+
+  return [...configured, ...extras];
+}
+
+function renderSessionChips(containerEl, inputName, options, selectedValues = []) {
+  if (!containerEl) {
+    return;
+  }
+  const selected = new Set(matchSessionSelection(options, selectedValues).map((item) => item.toLowerCase()));
+  containerEl.innerHTML = options
+    .map((session) => {
+      const checked = selected.has(session.toLowerCase()) ? "checked" : "";
+      return `<label class="chip"><input type="checkbox" name="${escapeHtmlAttr(inputName)}" value="${escapeHtmlAttr(session)}" ${checked} /><span>${escapeHtml(session)}</span></label>`;
+    })
+    .join("");
+}
+
+function fillSessionFilter(selectedValue = "") {
+  if (!filterSessionEl) {
+    return;
+  }
+  const selected = normalizeSessionName(selectedValue);
+  const options = getSessionUniverse();
+
+  filterSessionEl.innerHTML = '<option value="">All Sessions</option>';
+  options.forEach((session) => {
+    const option = document.createElement("option");
+    option.value = session;
+    option.textContent = session;
+    filterSessionEl.appendChild(option);
+  });
+
+  if (selected && options.some((session) => session.toLowerCase() === selected.toLowerCase())) {
+    const exact = options.find((session) => session.toLowerCase() === selected.toLowerCase());
+    filterSessionEl.value = exact || "";
+  } else {
+    filterSessionEl.value = "";
+  }
+}
+
+function refreshSessionSelectors() {
+  const createSelected = getCheckedValues(form, "session");
+  const editSelected = getCheckedValues(editForm, "editSession");
+
+  renderSessionChips(sessionChipsEl, "session", getConfiguredSessions(), createSelected);
+  renderSessionChips(editSessionChipsEl, "editSession", getSessionOptionsForInput(editSelected), editSelected);
+  fillSessionFilter(filterSessionEl?.value || "");
+}
+
 function renderStrategyModeOptions() {
   if (!settingStrategyModeEl) {
     return;
@@ -2084,6 +3060,7 @@ function renderSettingsPanel() {
     settingShowInsightReelEl.checked = Boolean(appSettings.showInsightReel);
   }
   renderStrategyModeOptions();
+  renderSettingsSessionEditor();
   renderSettingsRuleTabs();
   renderSettingsRuleEditor();
 }
@@ -2193,6 +3170,87 @@ function renderSettingsRuleEditor() {
   `;
 }
 
+function renderSettingsSessionEditor() {
+  if (!settingsSessionEditorEl) {
+    return;
+  }
+  const sessions = orderSessions(settingsSessionDraft);
+  settingsSessionDraft = [...sessions];
+
+  settingsSessionEditorEl.innerHTML = sessions.length
+    ? sessions
+        .map(
+          (session, index) => `
+            <div class="settings-rule-row">
+              <input
+                class="settings-rule-text settings-session-text"
+                data-session-index="${index}"
+                type="text"
+                maxlength="24"
+                value="${escapeHtmlAttr(session)}"
+              />
+              <button
+                type="button"
+                class="settings-rule-remove"
+                data-remove-session-index="${index}"
+                aria-label="Remove session"
+                title="Remove session"
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </div>
+          `
+        )
+        .join("")
+    : '<div class="muted-empty">No sessions added yet.</div>';
+}
+
+function addSessionFromSettings(rawName) {
+  const session = normalizeSessionName(rawName);
+  if (!session) {
+    showToast("Enter a session name first", "bad");
+    return;
+  }
+
+  const exists = settingsSessionDraft.some((item) => item.toLowerCase() === session.toLowerCase());
+  if (exists) {
+    showToast(`${session} already exists`, "bad");
+    return;
+  }
+
+  settingsSessionDraft = orderSessions([...settingsSessionDraft, session]);
+  if (settingsNewSessionEl) {
+    settingsNewSessionEl.value = "";
+  }
+  renderSettingsSessionEditor();
+  showToast(`Added ${session}. Save sessions to apply.`, "ok");
+}
+
+function saveSettingsSessions() {
+  if (settingsSaveSessionsBtn) {
+    settingsSaveSessionsBtn.disabled = true;
+  }
+  try {
+    const normalized = orderSessions(settingsSessionDraft);
+    if (!normalized.length) {
+      showToast("Add at least one session", "bad");
+      return;
+    }
+
+    appSettings.sessionOptions = [...normalized];
+    settingsSessionDraft = [...normalized];
+    saveAppSettings();
+    refreshSessionSelectors();
+    renderSettingsSessionEditor();
+    renderAll();
+    showToast("Sessions saved", "ok");
+  } finally {
+    if (settingsSaveSessionsBtn) {
+      settingsSaveSessionsBtn.disabled = false;
+    }
+  }
+}
+
 async function saveSettingsRules() {
   if (settingsSaveRulesBtn) {
     settingsSaveRulesBtn.disabled = true;
@@ -2214,8 +3272,7 @@ async function saveSettingsRules() {
     refreshStrategySelectors();
     renderSettingsPanel();
     const updatedCount = await recomputeTradesForCurrentRules();
-    renderCreateConfluenceChecklist();
-    updateCreateConfluenceSummary();
+    syncEntryFlowState({ forceChecklistRerender: true });
     renderEditConfluenceChecklist();
     updateEditConfluenceSummary();
     renderAll();
@@ -2259,7 +3316,7 @@ async function recomputeTradesForCurrentRules() {
     }
 
     trades[index] = next;
-    await dbPutTrade(next);
+    await saveTradeRecord(next);
     updatedCount += 1;
   }
   return updatedCount;
@@ -2386,6 +3443,7 @@ function renderCreateConfluenceChecklist() {
   const strategy = strategyEl.value;
   const selected = getCheckedValues(form, "createConfluence");
   confluenceChecklistEl.innerHTML = buildConfluenceChecklistHtml(strategy, "createConfluence", selected);
+  confluenceChecklistEl.dataset.strategy = strategy || "";
 }
 
 function updateCreateConfluenceSummary() {
@@ -2453,8 +3511,8 @@ async function handleCreateSubmit(event) {
     const inferred = inferConfluence(strategyEl.value, presentConfluences);
 
     registerPair(pairEl.value);
-    const beforeImageId = createImages.beforeBlob ? await dbSaveImage(createImages.beforeBlob) : null;
-    const afterImageId = createImages.afterBlob ? await dbSaveImage(createImages.afterBlob) : null;
+    const beforeImageId = createImages.beforeBlob ? await saveImageRecord(createImages.beforeBlob) : null;
+    const afterImageId = createImages.afterBlob ? await saveImageRecord(createImages.afterBlob) : null;
 
     const nowIso = new Date().toISOString();
     const status = outcomeEl.value ? "closed" : "open";
@@ -2489,7 +3547,7 @@ async function handleCreateSubmit(event) {
       updated_at: nowIso,
     });
 
-    await dbPutTrade(trade);
+    await saveTradeRecord(trade);
     trades.unshift(trade);
 
     saveDefaults({
@@ -2762,9 +3820,9 @@ function createInlineEditorRow(trade) {
 
       <div class="field">Session
         <div class="chip-row">
-          ${SESSION_OPTIONS.map((session) => {
+          ${getSessionOptionsForInput(trade.sessions || []).map((session) => {
             const checked = (trade.sessions || []).includes(session) ? "checked" : "";
-            return `<label class="chip"><input type="checkbox" name="inlineSession" value="${session}" ${checked} /><span>${session}</span></label>`;
+            return `<label class="chip"><input type="checkbox" name="inlineSession" value="${escapeHtmlAttr(session)}" ${checked} /><span>${escapeHtml(session)}</span></label>`;
           }).join("")}
         </div>
       </div>
@@ -3089,10 +4147,7 @@ function closeEditModal() {
 }
 
 function syncEditSessions(values) {
-  const set = new Set(values);
-  editForm.querySelectorAll('input[name="editSession"]').forEach((input) => {
-    input.checked = set.has(input.value);
-  });
+  renderSessionChips(editSessionChipsEl, "editSession", getSessionOptionsForInput(values), values);
 }
 
 async function handleEditSubmit(event) {
@@ -3224,7 +4279,7 @@ async function updateTrade(id, patch) {
   });
 
   trades[index] = nextTrade;
-  await dbPutTrade(nextTrade);
+  await saveTradeRecord(nextTrade);
 }
 
 async function applyImagePatch(currentImageId, imagePatch) {
@@ -3235,14 +4290,14 @@ async function applyImagePatch(currentImageId, imagePatch) {
   let imageId = currentImageId || null;
 
   if (imagePatch.remove && imageId) {
-    await dbDeleteImage(imageId);
+    await deleteImageRecord(imageId);
     imageId = null;
   }
 
   if (imagePatch.newBlob) {
-    const newId = await dbSaveImage(imagePatch.newBlob);
+    const newId = await saveImageRecord(imagePatch.newBlob);
     if (imageId) {
-      await dbDeleteImage(imageId);
+      await deleteImageRecord(imageId);
     }
     imageId = newId;
   }
@@ -3329,13 +4384,13 @@ async function deleteTrade(id) {
 
   const trade = trades[index];
   if (trade.before_image_id) {
-    await dbDeleteImage(trade.before_image_id);
+    await deleteImageRecord(trade.before_image_id);
   }
   if (trade.after_image_id) {
-    await dbDeleteImage(trade.after_image_id);
+    await deleteImageRecord(trade.after_image_id);
   }
 
-  await dbDeleteTrade(id);
+  await deleteTradeRecord(id);
   trades.splice(index, 1);
 
   if (openInlineEditorId === id) {
@@ -3386,6 +4441,16 @@ async function loadImageUrls(rows) {
   }
 
   const blobs = await dbGetImages(ids);
+  const missingIds = ids.filter((id) => !blobs.has(id));
+  for (const imageId of missingIds) {
+    const cloudBlob = await fetchImageFromCloud(imageId);
+    if (!cloudBlob) {
+      continue;
+    }
+    await putImageRecord(imageId, cloudBlob, { enqueue: false });
+    blobs.set(imageId, cloudBlob);
+  }
+
   blobs.forEach((blob, id) => {
     const url = URL.createObjectURL(blob);
     historyObjectUrls.push(url);
@@ -3930,6 +4995,10 @@ function renderAnalyticsVisuals(tab, analytics) {
   }
 
   if (tab === "sessions") {
+    const sessionOptions = Array.isArray(analytics.sessionOptions) && analytics.sessionOptions.length
+      ? analytics.sessionOptions
+      : [...DEFAULT_SESSION_OPTIONS];
+
     visualsEl.innerHTML = `
       <article class="chart-card">
         <h3>Session Net PnL</h3>
@@ -3945,7 +5014,7 @@ function renderAnalyticsVisuals(tab, analytics) {
       </article>
     `;
 
-    const sessionSummaryRows = SESSION_OPTIONS.map((session) => [
+    const sessionSummaryRows = sessionOptions.map((session) => [
       session,
       `${analytics.totalTrades ? ((analytics.sessionMix[session] / analytics.totalTrades) * 100).toFixed(1) : "0.0"}%`,
       formatMoney(analytics.sessionNetPnl[session] || 0),
@@ -3971,11 +5040,11 @@ function renderAnalyticsVisuals(tab, analytics) {
     createChart("chart-session-pnl", {
       type: "bar",
       data: {
-        labels: SESSION_OPTIONS,
+        labels: sessionOptions,
         datasets: [
           {
-            data: SESSION_OPTIONS.map((session) => analytics.sessionNetPnl[session] || 0),
-            backgroundColor: ["#6247e8", "#1f9d71", "#d6a03a"],
+            data: sessionOptions.map((session) => analytics.sessionNetPnl[session] || 0),
+            backgroundColor: sessionOptions.map((_, index) => `hsl(${(index * 59 + 248) % 360} 72% 56%)`),
             borderRadius: 8,
           },
         ],
@@ -4565,21 +5634,22 @@ function computeAnalytics(rows) {
     F: avg(gradePnl.F),
   };
 
-  const sessionMix = Object.fromEntries(SESSION_OPTIONS.map((session) => [session, 0]));
-  const sessionNetPnl = Object.fromEntries(SESSION_OPTIONS.map((session) => [session, 0]));
-  const sessionClosed = Object.fromEntries(SESSION_OPTIONS.map((session) => [session, 0]));
-  const sessionWins = Object.fromEntries(SESSION_OPTIONS.map((session) => [session, 0]));
+  const sessionOptions = getSessionUniverse({ rows });
+  const sessionMix = Object.fromEntries(sessionOptions.map((session) => [session, 0]));
+  const sessionNetPnl = Object.fromEntries(sessionOptions.map((session) => [session, 0]));
+  const sessionClosed = Object.fromEntries(sessionOptions.map((session) => [session, 0]));
+  const sessionWins = Object.fromEntries(sessionOptions.map((session) => [session, 0]));
 
   const sessionByStrategyMatrix = {
-    rows: SESSION_OPTIONS,
+    rows: sessionOptions,
     cols: [...Object.keys(strategyCounts)],
-    values: SESSION_OPTIONS.map(() => Object.keys(strategyCounts).map(() => 0)),
+    values: sessionOptions.map(() => Object.keys(strategyCounts).map(() => 0)),
   };
 
   const sessionByPairMatrix = {
-    rows: SESSION_OPTIONS,
+    rows: sessionOptions,
     cols: pairUniverse,
-    values: SESSION_OPTIONS.map(() => pairUniverse.map(() => 0)),
+    values: sessionOptions.map(() => pairUniverse.map(() => 0)),
   };
 
   const hourFrequency = Array.from({ length: 24 }, () => 0);
@@ -4610,7 +5680,7 @@ function computeAnalytics(rows) {
 
     dayPerformance[captured.getDay()] += Number.isFinite(trade.pnl) ? trade.pnl : 0;
 
-    SESSION_OPTIONS.forEach((session, sessionIndex) => {
+    sessionOptions.forEach((session, sessionIndex) => {
       if (!(trade.sessions || []).includes(session)) {
         return;
       }
@@ -4659,11 +5729,11 @@ function computeAnalytics(rows) {
   const hourExpectancy = hourPnl.map((value, index) => (hourClosed[index] ? value / hourClosed[index] : 0));
 
   const sessionWinRate = Object.fromEntries(
-    SESSION_OPTIONS.map((session) => [session, sessionClosed[session] ? (sessionWins[session] / sessionClosed[session]) * 100 : 0])
+    sessionOptions.map((session) => [session, sessionClosed[session] ? (sessionWins[session] / sessionClosed[session]) * 100 : 0])
   );
 
   const sessionExpectancy = Object.fromEntries(
-    SESSION_OPTIONS.map((session) => [session, sessionClosed[session] ? sessionNetPnl[session] / sessionClosed[session] : 0])
+    sessionOptions.map((session) => [session, sessionClosed[session] ? sessionNetPnl[session] / sessionClosed[session] : 0])
   );
 
   const pairAgg = {};
@@ -4948,6 +6018,7 @@ function computeAnalytics(rows) {
     hardInvalidationWinRate,
 
     sessionMix,
+    sessionOptions,
     sessionNetPnl,
     sessionWinRate,
     sessionExpectancy,
@@ -5335,7 +6406,7 @@ function normalizeTrade(trade) {
     pair: normalizePairCode(trade.pair || ""),
     direction: trade.direction || "",
     lot_size: Number(trade.lot_size || 0.001),
-    sessions: Array.isArray(trade.sessions) ? trade.sessions : [],
+    sessions: orderSessions(Array.isArray(trade.sessions) ? trade.sessions : []),
     strategy,
     present_confluences: presentConfluences,
     confluence_score: trade.confluence_score || inferred.confluence_score,
@@ -5371,5 +6442,13 @@ async function loadTradesFromDb() {
 }
 
 async function dbGetImageBlob(id) {
-  return dbGetImage(id);
+  const localBlob = await dbGetImage(id);
+  if (localBlob) {
+    return localBlob;
+  }
+  const cloudBlob = await fetchImageFromCloud(id);
+  if (cloudBlob) {
+    await putImageRecord(id, cloudBlob, { enqueue: false });
+  }
+  return cloudBlob;
 }
