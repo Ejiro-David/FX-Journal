@@ -1,0 +1,140 @@
+what can screenshots actually show and how do we easy logging trades with this. pair, time, sell or buy, can this really work? considering the somethings random distance between the OB the sell marker and when price triggers.. could this confuse the system? can we set up a test for this..
+AI analysis of trades from ss
+
+
+Legacy complaints to preserve during upgrade (do not regress):
+1. Cannot click/tap a trade to view full details quickly.
+2. Edit flow is weak and needs a full UX revamp.
+3. Hide note field from compact list view.
+4. Editing from history should be faster and clearer.
+5. Previously added images must always show when editing.
+6. List view should only show high-value data for fast scan.
+7. Gallery editing can be inline, but closed-trade editing should include friction.
+
+Path forward (next execution order):
+1. Keep history compact by default (Closed tab + list mode), then add detail tap flow for deep view.
+2. Stabilize edit UX: open trade = quick edit, closed trade = friction edit (hold-to-delete already exists).
+3. Ensure image continuity: existing before/after images must always hydrate into edit state.
+4. Continue reducing list noise: no note in compact list, keep only scan-critical fields.
+5. Keep scoring deterministic and strategy-aware; no manual grade edits.
+
+Resolved decisions added now:
+1. Strategy-switch data wipe:
+- If strategy changes (SMC <-> ICC), checklist state is reset immediately.
+- No background preservation of old ticks on switch.
+
+2. State tag hierarchy conflict (priority rule):
+- When multiple backing items are missing, choose one primary backing issue by priority:
+	HTF bias aligned -> NY/overlap window aligned -> Structural liquidity in trade direction.
+- Use that primary label for state tag; if quality is also missing, append "+ reduced quality".
+
+3. F-grade flow (non-blocking):
+- No blocking confirmation modal for F-grade saves.
+- Save button turns red and text changes to "Force Save Invalid Setup".
+- This preserves speed while still signaling invalid setup.
+
+Adherence mapping update:
+- Full / High / Reduced / Bad (renamed from Broken).
+
+
+Completed in this pass (2026-03-22):
+1. Tap-to-view detail modal is live from history list + grid cards.
+2. Detail modal now shows:
+- before/after screenshots
+- pair/direction/time/status/strategy/sessions
+- lot, pnl, grade, adherence, state, outcome
+- note and missing core/backing/quality lists
+3. Edit flow friction updated:
+- open trades in list = quick inline edit
+- closed trades = confirmation gate before opening edit
+- closed trades still require hold-to-delete
+4. Compact list cleanup:
+- note field hidden in list rows (scan-first)
+5. Edit image hydration hardened:
+- loads before/after in parallel with fallback handling
+- warns if one or more saved screenshots cannot be loaded
+
+What to do next (execution order):
+1. Manual smoke pass on live branch:
+- row tap -> detail modal -> edit trade
+- closed trade edit confirmation
+- open trade inline edit still fast
+- verify old screenshots appear in edit modal
+2. Add keyboard accessibility for detail open (Enter/Space on focused row/card).
+3. Add tiny "missing image source" telemetry counter in analytics/behavior tab.
+4. Reduce badge density in compact list (keep only 3-4 highest-value badges).
+5. Add one-click jump from detail modal to the exact history row after save.
+
+Acceptance checks for this phase:
+1. No regressions on strategy scoring outputs (grade/state/adherence).
+2. No regressions on cloud/local image persistence.
+3. No blocking errors in app.js/styles.css/index.html.
+
+Continuation update (2026-03-22):
+1. Keyboard accessibility added for history drill-down:
+- Enter/Space on focused row/card opens trade detail modal.
+2. Compact list scan speed improved:
+- reduced row badge density to high-value items only (state, strategy, grade + open/outcome context).
+3. Behavior telemetry extended:
+- added "Image Hydration Misses" metric.
+- increments when existing saved edit images fail to hydrate.
+4. Lot size default standardized:
+- new entry lot starts at 0.01 (0.010 display) by default.
+- normalization fallback for legacy/missing lot now defaults to 0.01.
+
+Immediate next actions:
+1. Live smoke test keyboard flow in both list and grid views.
+2. Add visual focus style to row/card keyboard targets for accessibility clarity.
+3. Add optional reset control for hydration miss counter in Settings.
+
+List-view glance mode update:
+1. History list row converted to strict single-line layout.
+2. Row now shows only: Pair/Direction | Outcome + Grade + Strategy | PnL.
+3. Dropped from list row (still available in detail/gallery):
+- timestamp
+- sessions badges
+- long state-tag wording
+- note text
+- adherence status (grade is sufficient for quality assessment at a glance)
+
+MT5 visual direction update (2026-03-22):
+1. Home launchpad simplified and de-cluttered:
+- removed top Insight Reel card from home flow.
+- kept home focused on Log Trade (primary) + Edge Review/History/Settings (secondary).
+2. Visual system shifted to trading-native dark style:
+- near-black background and graphite cards.
+- reduced glow and softer decorative effects.
+- sharper spacing/radius and tighter hierarchy.
+- restrained blue accent replacing purple-first mood.
+3. List-view edit action moved to details-only path:
+- removed list row edit icon.
+- removed gallery card edit icon.
+- editing now routes from trade detail modal button.
+
+TradingView-like consistency cleanup (2026-03-22):
+1. Fixed remaining light-mode mismatches across components:
+- lot size stepper box
+- chart/table cards
+- filter panel + pills
+- history row/card surfaces
+- drop zones + setup cards
+2. Removed leftover purple accents from interactive states and borders.
+3. Simplified branding + typography for cleaner terminal/trading feel:
+- title changed to Trade Journal
+- switched to IBM Plex Sans family
+
+Final UI + data behavior updates (2026-03-22):
+1. Line-view glance text now spells grade in full:
+- uses "Grade C" style wording instead of compact "GC".
+2. Lot-size behavior standardized end-to-end:
+- default lot = 0.01
+- step increment/decrement = 0.01
+- create/edit/inline lot inputs all use min=0.01 and step=0.01
+3. Theme mode simplified:
+- removed light/dark toggle from UI
+- app now runs as dark-only mode with high contrast surfaces
+4. Existing-trade migration wired:
+- one-time lot-size normalization migration snaps legacy lots to 0.01 step and minimum 0.01
+
+
+---

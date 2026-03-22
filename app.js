@@ -20,6 +20,8 @@ const STORAGE_KEYS = {
   SYNC_QUEUE_KEY: "lazyButDataSyncQueueV1",
   SYNC_CURSOR_KEY: "lazyButDataSyncCursorV1",
   AUTH_EMAIL_KEY: "lazyButDataAuthEmailV1",
+  IMAGE_HYDRATION_MISS_KEY: "lazyButDataImageHydrationMissV1",
+  LOT_SIZE_MIGRATION_KEY: "lazyButDataLotSizeMigrationV1",
 };
 
 const ADD_PAIR_OPTION_VALUE = "__ADD_PAIR_OPTION__";
@@ -27,10 +29,13 @@ const ADD_PAIR_OPTION_VALUE = "__ADD_PAIR_OPTION__";
 const PAIRS = ["GBPUSD", "EURUSD", "USDJPY", "XAUUSD", "NAS100"];
 const OUTCOMES = ["Full Win", "Partial + BE", "Breakeven", "Full Loss"];
 const DEFAULT_SESSION_OPTIONS = ["London", "NY", "Asian"];
+const DEFAULT_LOT_SIZE = 0.01;
+const LOT_SIZE_STEP = 0.01;
+const LOT_SIZE_MIN = 0.01;
 
 function createBaseSettings() {
   return {
-    showInsightReel: true,
+    showInsightReel: false,
     strategyMode: "all",
     sessionOptions: [...DEFAULT_SESSION_OPTIONS],
   };
@@ -47,49 +52,94 @@ const {
   SYNC_QUEUE_KEY,
   SYNC_CURSOR_KEY,
   AUTH_EMAIL_KEY,
+  IMAGE_HYDRATION_MISS_KEY,
+  LOT_SIZE_MIGRATION_KEY,
 } = STORAGE_KEYS;
 
 const DEFAULT_STRATEGIES = ["ICC", "SMC"];
 
-const INTEGRITY_ORDER = [
-  "full_confluence",
-  "one_soft_confluence_missing",
-  "multiple_soft_confluences_missing",
-  "hard_invalidation_present",
-];
+const INTEGRITY_ORDER = ["Full", "High", "Reduced", "Bad"];
 
-const CONFLUENCE_RULES = {
-  ICC: {
-    required: [
-      "HTF bias aligned",
-      "Clear indication / expansion leg present",
-      "Proper correction / sweep formed",
-      "Valid 15m MSS body close",
-    ],
-    quality: ["Entry on valid pullback"],
-  },
+const STRATEGY_CONFIG = {
   SMC: {
-    required: [
-      "HTF bias aligned",
+    core: [
       "Clear liquidity sweep",
       "Valid MSS / displacement body close",
       "FVG present",
     ],
-    quality: ["Valid RTO into FVG + OB/Breaker"],
+    backing: [
+      "HTF bias aligned",
+      "Structural liquidity in trade direction",
+    ],
+    quality: ["First clean return to zone"],
+    entryTypes: ["OB", "Breaker", "Liquidity entry", "FVG-only"],
   },
+  ICC: {
+    core: [
+      "Clear indication / expansion leg present",
+      "Proper correction / sweep formed",
+      "Valid 15m MSS body close",
+    ],
+    backing: ["HTF bias aligned", "NY/overlap window aligned"],
+    quality: ["First clean pullback after MSS"],
+  },
+};
+
+// Keep settings editor backward-compatible while scoring uses STRATEGY_CONFIG.
+const CONFLUENCE_RULES = {
+  SMC: {
+    required: [...STRATEGY_CONFIG.SMC.core, ...STRATEGY_CONFIG.SMC.backing],
+    quality: [...STRATEGY_CONFIG.SMC.quality],
+  },
+  ICC: {
+    required: [...STRATEGY_CONFIG.ICC.core, ...STRATEGY_CONFIG.ICC.backing],
+    quality: [...STRATEGY_CONFIG.ICC.quality],
+  },
+};
+
+const BACKING_LABEL_MAP = {
+  "HTF bias aligned": "off-bias",
+  "Structural liquidity in trade direction": "no structural objective",
+  "NY/overlap window aligned": "off-session",
+};
+
+const BACKING_PRIORITY = [
+  "HTF bias aligned",
+  "NY/overlap window aligned",
+  "Structural liquidity in trade direction",
+];
+
+const CORE_LABEL_MAP = {
+  "Clear liquidity sweep": "no liquidity sweep",
+  "Valid MSS / displacement body close": "no MSS/displacement",
+  "FVG present": "no FVG",
+  "Clear indication / expansion leg present": "no indication leg",
+  "Proper correction / sweep formed": "no correction/sweep",
+  "Valid 15m MSS body close": "no 15m MSS",
 };
 
 function integrityLabel(value) {
   switch (value) {
-    case "full_confluence":
-      return "Full confluence";
-    case "one_soft_confluence_missing":
-      return "One soft confluence missing";
-    case "multiple_soft_confluences_missing":
-      return "Multiple soft confluences missing";
+    case "Full":
+      return "Full";
+    case "High":
+      return "High";
+    case "Reduced":
+      return "Reduced";
     default:
-      return "Hard invalidation present";
+      return "Bad";
   }
+}
+
+function pickPrimaryBackingIssue(missingBacking) {
+  const set = new Set(missingBacking || []);
+  for (const key of BACKING_PRIORITY) {
+    if (set.has(key)) {
+      return BACKING_LABEL_MAP[key] || "weak backing";
+    }
+  }
+  const first = (missingBacking || [])[0];
+  return BACKING_LABEL_MAP[first] || "weak backing";
 }
 
 const TAB_INSIGHTS = {
@@ -162,6 +212,7 @@ const TAB_INSIGHTS = {
     "image_completeness_rate",
     "before_presence_rate",
     "after_presence_rate",
+    "image_hydration_misses",
     "note_usage_and_median_length",
     "edit_frequency_per_trade",
   ],
@@ -226,6 +277,7 @@ const METRIC_LABELS = {
   image_completeness_rate: "Image Completeness Rate",
   before_presence_rate: "Before Image Presence",
   after_presence_rate: "After Image Presence",
+  image_hydration_misses: "Image Hydration Misses",
   note_usage_and_median_length: "Note Usage + Median Length",
   edit_frequency_per_trade: "Edit Frequency / Trade",
 };
@@ -1488,6 +1540,8 @@ const noteEl = document.getElementById("note");
 const createConfluenceDetailsEl = document.getElementById("createConfluenceDetails");
 const confluenceChecklistEl = document.getElementById("confluenceChecklist");
 const confluenceSummaryEl = document.getElementById("confluenceSummary");
+const createSmcEntryTypesWrapEl = document.getElementById("createSmcEntryTypesWrap");
+const createSmcEntryTypesEl = document.getElementById("createSmcEntryTypes");
 const entryPnlFieldEl = document.getElementById("entryPnlField");
 
 const beforeZone = document.getElementById("beforeZone");
@@ -1511,6 +1565,14 @@ const filterSessionEl = document.getElementById("filterSession");
 const filterOutcomeEl = document.getElementById("filterOutcome");
 const filterStrategyEl = document.getElementById("filterStrategy");
 const filterIntegrityEl = document.getElementById("filterIntegrity");
+const historyStatusTabsEl = document.getElementById("historyStatusTabs");
+const historyTabClosedEl = document.getElementById("historyTabClosed");
+const historyTabOpenEl = document.getElementById("historyTabOpen");
+const historyTabAllEl = document.getElementById("historyTabAll");
+const historyFilterToggleEl = document.getElementById("historyFilterToggle");
+const historyFilterMetaEl = document.getElementById("historyFilterMeta");
+const historyFilterPanelEl = document.getElementById("historyFilterPanel");
+const historyClearFiltersEl = document.getElementById("historyClearFilters");
 const sessionChipsEl = document.getElementById("sessionChips");
 const editSessionChipsEl = document.getElementById("editSessionChips");
 
@@ -1547,6 +1609,7 @@ const editLotIncBtn = document.getElementById("editLotInc");
 
 const editModal = document.getElementById("edit-modal");
 const editForm = document.getElementById("edit-form");
+const editSaveBtn = editForm?.querySelector('button[type="submit"]');
 const editErrorEl = document.getElementById("edit-error");
 const modalCloseBtn = document.getElementById("modal-close");
 const deleteTradeBtn = document.getElementById("delete-trade");
@@ -1566,6 +1629,8 @@ const editNoteEl = document.getElementById("editNote");
 const editConfluenceDetailsEl = document.getElementById("editConfluenceDetails");
 const editConfluenceChecklistEl = document.getElementById("editConfluenceChecklist");
 const editConfluenceSummaryEl = document.getElementById("editConfluenceSummary");
+const editSmcEntryTypesWrapEl = document.getElementById("editSmcEntryTypesWrap");
+const editSmcEntryTypesEl = document.getElementById("editSmcEntryTypes");
 
 const editBeforeZone = document.getElementById("editBeforeZone");
 const editAfterZone = document.getElementById("editAfterZone");
@@ -1575,6 +1640,10 @@ const editBeforePreview = document.getElementById("editBeforePreview");
 const editAfterPreview = document.getElementById("editAfterPreview");
 const editClearBeforeBtn = document.getElementById("editClearBefore");
 const editClearAfterBtn = document.getElementById("editClearAfter");
+const tradeDetailModalEl = document.getElementById("trade-detail-modal");
+const detailModalBodyEl = document.getElementById("detailModalBody");
+const detailModalCloseBtn = document.getElementById("detail-modal-close");
+const detailEditBtn = document.getElementById("detailEditBtn");
 
 const toast = createToastController(toastEl);
 const storage = createIdbStorage({
@@ -1596,7 +1665,8 @@ const {
 } = storage;
 
 let trades = [];
-let historyViewMode = "grid";
+let historyViewMode = "list";
+let historyStatusTab = "closed";
 let activeAnalyticsTab = "performance";
 let openInlineEditorId = null;
 let entryManualTimeEnabled = false;
@@ -1631,6 +1701,20 @@ const editImages = {
   afterRemoved: false,
 };
 
+let activeDetailTradeId = null;
+let detailModalUrls = [];
+let imageHydrationMisses = Number(localStorage.getItem(IMAGE_HYDRATION_MISS_KEY) || 0);
+
+if (!Number.isFinite(imageHydrationMisses) || imageHydrationMisses < 0) {
+  imageHydrationMisses = 0;
+}
+
+function incrementImageHydrationMisses(count = 1) {
+  const increment = Math.max(0, Number(count) || 0);
+  imageHydrationMisses += increment;
+  localStorage.setItem(IMAGE_HYDRATION_MISS_KEY, String(imageHydrationMisses));
+}
+
 let createBeforeBinder;
 let createAfterBinder;
 let editBeforeBinder;
@@ -1663,10 +1747,13 @@ async function init() {
   bindEvents();
 
   await loadTradesFromDb();
+  await migrateTradeLotSizesIfNeeded();
   syncPairRegistryFromTrades(trades);
   refreshPairSelectors();
   refreshSessionSelectors();
   syncEntryFlowState();
+  setHistoryView("list");
+  setHistoryStatusTab("closed");
   renderAll();
   await initCloudSync();
 }
@@ -1892,6 +1979,13 @@ function bindEvents() {
   bindChipToggle(sessionChipsEl, "session");
   bindChipToggle(editSessionChipsEl, "editSession");
   strategyEl.addEventListener("change", () => {
+    const previousStrategy = normalizeStrategyName(strategyEl.dataset.prevStrategy || "");
+    const nextStrategy = normalizeStrategyName(strategyEl.value);
+    if (previousStrategy && nextStrategy && previousStrategy !== nextStrategy) {
+      clearCheckedValues(form, "createConfluence");
+      clearCheckedValues(form, "createSmcEntryType");
+    }
+    strategyEl.dataset.prevStrategy = nextStrategy;
     syncEntryFlowState({ forceChecklistRerender: true });
   });
   outcomeEl.addEventListener("change", syncEntryFlowState);
@@ -1902,9 +1996,49 @@ function bindEvents() {
   [filterPairEl, filterSessionEl, filterOutcomeEl, filterStrategyEl, filterIntegrityEl].forEach((el) => {
     el.addEventListener("change", () => {
       openInlineEditorId = null;
+      updateHistoryFilterMeta();
       renderFilteredSections();
     });
   });
+
+  if (historyFilterToggleEl && historyFilterPanelEl) {
+    historyFilterToggleEl.addEventListener("click", () => {
+      const nextHidden = !historyFilterPanelEl.hidden;
+      historyFilterPanelEl.hidden = nextHidden;
+      historyFilterToggleEl.textContent = nextHidden ? "Filter" : "Hide Filters";
+    });
+  }
+
+  if (historyClearFiltersEl) {
+    historyClearFiltersEl.addEventListener("click", () => {
+      filterPairEl.value = "";
+      filterSessionEl.value = "";
+      filterOutcomeEl.value = "";
+      filterStrategyEl.value = "";
+      filterIntegrityEl.value = "";
+      openInlineEditorId = null;
+      updateHistoryFilterMeta();
+      renderFilteredSections();
+    });
+  }
+
+  if (historyStatusTabsEl) {
+    historyStatusTabsEl.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const button = target.closest("[data-status]");
+      if (!button) {
+        return;
+      }
+      const status = button.getAttribute("data-status");
+      if (!status) {
+        return;
+      }
+      setHistoryStatusTab(status);
+    });
+  }
 
   analyticsTabsEl.addEventListener("click", (event) => {
     const target = event.target;
@@ -1939,6 +2073,35 @@ function bindEvents() {
   exportFilteredBtn.addEventListener("click", () => exportCsv(getFilteredTrades(), "lazy-but-data-v4-filtered.csv"));
 
   historyGalleryEl.addEventListener("click", onHistoryActionClick);
+  historyGalleryEl.addEventListener("keydown", onHistoryActionKeyDown);
+
+  if (detailModalCloseBtn) {
+    detailModalCloseBtn.addEventListener("click", closeDetailModal);
+  }
+  if (tradeDetailModalEl) {
+    tradeDetailModalEl.addEventListener("click", (event) => {
+      if (event.target === tradeDetailModalEl) {
+        closeDetailModal();
+      }
+    });
+  }
+  if (detailEditBtn) {
+    detailEditBtn.addEventListener("click", async () => {
+      const id = activeDetailTradeId;
+      if (!id) {
+        return;
+      }
+      const trade = trades.find((item) => item.id === id);
+      if (!trade) {
+        return;
+      }
+      if (!confirmClosedTradeEdit(trade)) {
+        return;
+      }
+      closeDetailModal();
+      await openEditModal(id);
+    });
+  }
 
   modalCloseBtn.addEventListener("click", closeEditModal);
   editModal.addEventListener("click", (event) => {
@@ -1949,8 +2112,21 @@ function bindEvents() {
 
   editManualTimeToggleEl.addEventListener("click", toggleEditManualTime);
   editStrategyEl.addEventListener("change", () => {
+    const previousStrategy = normalizeStrategyName(editStrategyEl.dataset.prevStrategy || "");
+    const nextStrategy = normalizeStrategyName(editStrategyEl.value);
+    if (previousStrategy && nextStrategy && previousStrategy !== nextStrategy) {
+      clearCheckedValues(editForm, "editConfluence");
+      clearCheckedValues(editForm, "editSmcEntryType");
+    }
+    editStrategyEl.dataset.prevStrategy = nextStrategy;
     renderEditConfluenceChecklist();
     updateEditConfluenceSummary();
+    syncSmcEntryTypeVisibility(editStrategyEl.value, {
+      wrapEl: editSmcEntryTypesWrapEl,
+      listEl: editSmcEntryTypesEl,
+      inputName: "editSmcEntryType",
+      selectedValues: getCheckedValues(editForm, "editSmcEntryType"),
+    });
     if (editConfluenceDetailsEl && !editConfluenceDetailsEl.open) {
       editConfluenceDetailsEl.open = true;
     }
@@ -2205,9 +2381,9 @@ async function compressImage(file) {
 }
 
 function adjustLot(inputEl, direction) {
-  const current = Number(inputEl.value) || 0.001;
-  const next = Math.max(0.001, Number((current + direction * 0.001).toFixed(3)));
-  inputEl.value = next.toFixed(3);
+  const current = Number(inputEl.value) || DEFAULT_LOT_SIZE;
+  const next = Math.max(LOT_SIZE_MIN, Number((current + direction * LOT_SIZE_STEP).toFixed(2)));
+  inputEl.value = next.toFixed(2);
 }
 
 function normalizeLotStep(inputEl) {
@@ -2215,7 +2391,17 @@ function normalizeLotStep(inputEl) {
   if (!Number.isFinite(value)) {
     return;
   }
-  inputEl.value = value.toFixed(3);
+  const snapped = Math.round(value / LOT_SIZE_STEP) * LOT_SIZE_STEP;
+  inputEl.value = Math.max(LOT_SIZE_MIN, snapped).toFixed(2);
+}
+
+function normalizeLotSizeValue(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_LOT_SIZE;
+  }
+  const snapped = Math.round(parsed / LOT_SIZE_STEP) * LOT_SIZE_STEP;
+  return Number(Math.max(LOT_SIZE_MIN, snapped).toFixed(2));
 }
 
 function normalizePairCode(raw) {
@@ -2445,6 +2631,8 @@ function applyDefaultDateTime() {
 
 function applySavedDefaults() {
   const defaults = loadDefaults();
+  lotSizeEl.value = DEFAULT_LOT_SIZE.toFixed(2);
+
   if (defaults) {
     if (defaults.pair) {
       registerPair(defaults.pair);
@@ -2455,7 +2643,10 @@ function applySavedDefaults() {
       directionEl.value = defaults.direction;
     }
     if (defaults.lotSize) {
-      lotSizeEl.value = defaults.lotSize;
+      const parsedLot = Number(defaults.lotSize);
+      if (Number.isFinite(parsedLot) && parsedLot > 0) {
+        lotSizeEl.value = normalizeLotSizeValue(parsedLot).toFixed(2);
+      }
     }
     if (defaults.strategy && getAllowedStrategies().includes(defaults.strategy)) {
       strategyEl.value = defaults.strategy;
@@ -2465,6 +2656,8 @@ function applySavedDefaults() {
   if (getAllowedStrategies().length === 1) {
     strategyEl.value = getAllowedStrategies()[0];
   }
+
+  strategyEl.dataset.prevStrategy = normalizeStrategyName(strategyEl.value);
 
   syncEntryFlowState({ forceChecklistRerender: true });
 }
@@ -2507,17 +2700,36 @@ function syncEntryFlowState(options = {}) {
       }
     }
     updateCreateConfluenceSummary();
+    syncSmcEntryTypeVisibility(strategyEl.value, {
+      wrapEl: createSmcEntryTypesWrapEl,
+      listEl: createSmcEntryTypesEl,
+      inputName: "createSmcEntryType",
+      selectedValues: getCheckedValues(form, "createSmcEntryType"),
+    });
   } else {
     confluenceChecklistEl.innerHTML = "";
     confluenceChecklistEl.dataset.strategy = "";
     confluenceSummaryEl.textContent = "Select strategy to load checklist.";
     confluenceSummaryEl.className = "confluence-summary muted-empty";
+    syncSmcEntryTypeVisibility("", {
+      wrapEl: createSmcEntryTypesWrapEl,
+      listEl: createSmcEntryTypesEl,
+      inputName: "createSmcEntryType",
+      selectedValues: [],
+    });
   }
+
+  updateInvalidSaveState(
+    saveBtn,
+    strategyEl.value,
+    getCheckedValues(form, "createConfluence"),
+    "Log Trade",
+    "Force Save Invalid Setup"
+  );
 }
 
 function getStoredTheme() {
-  const raw = localStorage.getItem(THEME_KEY);
-  return raw === "dark" ? "dark" : "light";
+  return "dark";
 }
 
 function applyStoredTheme() {
@@ -2526,7 +2738,7 @@ function applyStoredTheme() {
 
 function setTheme(theme, options = {}) {
   const { persist = true } = options;
-  const nextTheme = theme === "dark" ? "dark" : "light";
+  const nextTheme = "dark";
   document.documentElement.dataset.theme = nextTheme;
 
   if (themeToggleEl) {
@@ -2542,8 +2754,7 @@ function setTheme(theme, options = {}) {
 }
 
 function toggleTheme() {
-  const current = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-  setTheme(current === "dark" ? "light" : "dark");
+  setTheme("dark");
 }
 
 function handleClear(options = {}) {
@@ -2589,7 +2800,7 @@ function loadDefaults() {
 
 function createDefaultSettings() {
   return {
-    showInsightReel: true,
+    showInsightReel: false,
     strategyMode: "all",
     sessionOptions: [...DEFAULT_SESSION_OPTIONS],
     confluenceRules: cloneConfluenceRules(CONFLUENCE_RULES),
@@ -3299,6 +3510,19 @@ async function recomputeTradesForCurrentRules() {
       quality_missing_count: inferred.quality_missing_count,
       setup_integrity: inferred.setup_integrity,
       setup_grade: inferred.setup_grade,
+      state_tag: inferred.state_tag,
+      model_adherence: inferred.model_adherence,
+      core_present_count: inferred.core_present_count,
+      core_total_count: inferred.core_total_count,
+      backing_present_count: inferred.backing_present_count,
+      backing_total_count: inferred.backing_total_count,
+      quality_present_count: inferred.quality_present_count,
+      quality_total_count: inferred.quality_total_count,
+      missing_core: inferred.missing_core,
+      missing_backing: inferred.missing_backing,
+      missing_quality: inferred.missing_quality,
+      raw_score_present: inferred.raw_score_present,
+      raw_score_total: inferred.raw_score_total,
       updated_at: new Date().toISOString(),
     };
 
@@ -3309,7 +3533,9 @@ async function recomputeTradesForCurrentRules() {
       Number(trade.required_missing_count) !== Number(next.required_missing_count) ||
       Number(trade.quality_missing_count) !== Number(next.quality_missing_count) ||
       trade.setup_integrity !== next.setup_integrity ||
-      trade.setup_grade !== next.setup_grade;
+      trade.setup_grade !== next.setup_grade ||
+      trade.state_tag !== next.state_tag ||
+      trade.model_adherence !== next.model_adherence;
 
     if (!changed) {
       continue;
@@ -3340,59 +3566,150 @@ function getCheckedValues(root, name) {
   return [...root.querySelectorAll(`input[name="${name}"]:checked`)].map((el) => el.value);
 }
 
-function getConfluenceRules(strategy) {
-  const map = appSettings?.confluenceRules || CONFLUENCE_RULES;
-  const normalized = normalizeStrategyName(strategy);
-  if (map[normalized]) {
-    return map[normalized];
+function clearCheckedValues(root, name) {
+  root.querySelectorAll(`input[name="${name}"]:checked`).forEach((input) => {
+    if (input instanceof HTMLInputElement) {
+      input.checked = false;
+    }
+  });
+}
+
+function updateInvalidSaveState(buttonEl, strategy, presentConfluences, defaultText, forceText) {
+  if (!buttonEl) {
+    return;
   }
-  const fallbackKey = Object.keys(map).find((item) => item.toLowerCase() === normalized.toLowerCase());
-  return (fallbackKey && map[fallbackKey]) || { required: [], quality: [] };
+  const hasStrategy = Boolean(String(strategy || "").trim());
+  if (!hasStrategy || !presentConfluences.length) {
+    buttonEl.classList.remove("is-force-invalid");
+    buttonEl.textContent = defaultText;
+    return;
+  }
+
+  const inferred = inferConfluence(strategy, presentConfluences);
+  if (inferred.setup_grade === "F") {
+    buttonEl.classList.add("is-force-invalid");
+    buttonEl.textContent = forceText;
+    return;
+  }
+
+  buttonEl.classList.remove("is-force-invalid");
+  buttonEl.textContent = defaultText;
+}
+
+function getStrategyConfig(strategy) {
+  const normalized = normalizeStrategyName(strategy);
+  if (STRATEGY_CONFIG[normalized]) {
+    return STRATEGY_CONFIG[normalized];
+  }
+  const fallbackKey = Object.keys(STRATEGY_CONFIG).find((item) => item.toLowerCase() === normalized.toLowerCase());
+  return (fallbackKey && STRATEGY_CONFIG[fallbackKey]) || { core: [], backing: [], quality: [], entryTypes: [] };
+}
+
+function getConfluenceRules(strategy) {
+  const config = getStrategyConfig(strategy);
+  return {
+    required: [...(config.core || []), ...(config.backing || [])],
+    quality: [...(config.quality || [])],
+  };
 }
 
 function inferConfluence(strategy, presentConfluences) {
-  const rules = getConfluenceRules(strategy);
-  const all = [...rules.required, ...rules.quality];
-  const presentSet = new Set(presentConfluences || []);
-  const missing = all.filter((item) => !presentSet.has(item));
-  const requiredMissing = rules.required.filter((item) => !presentSet.has(item));
-  const qualityMissing = rules.quality.filter((item) => !presentSet.has(item));
+  const config = getStrategyConfig(strategy);
+  const core = config.core || [];
+  const backing = config.backing || [];
+  const quality = config.quality || [];
+  const all = [...core, ...backing, ...quality];
 
-  let setupIntegrity = "hard_invalidation_present";
-  if (!strategy || !all.length) {
-    setupIntegrity = "hard_invalidation_present";
-  } else if (requiredMissing.length > 0) {
-    setupIntegrity = "hard_invalidation_present";
-  } else if (qualityMissing.length === 0) {
-    setupIntegrity = "full_confluence";
-  } else if (qualityMissing.length === 1) {
-    setupIntegrity = "one_soft_confluence_missing";
+  const presentSet = new Set(presentConfluences || []);
+  const missingCore = core.filter((item) => !presentSet.has(item));
+  const missingBacking = backing.filter((item) => !presentSet.has(item));
+  const missingQuality = quality.filter((item) => !presentSet.has(item));
+  const missing = [...missingCore, ...missingBacking, ...missingQuality];
+
+  const corePresentCount = core.length - missingCore.length;
+  const backingPresentCount = backing.length - missingBacking.length;
+  const qualityPresentCount = quality.length - missingQuality.length;
+  const rawScorePresent = all.length - missing.length;
+
+  let grade = "F";
+  if (missingCore.length > 0) {
+    grade = "F";
+  } else if (missingBacking.length === 0 && missingQuality.length === 0) {
+    grade = "A+";
+  } else if (missingBacking.length === 0 && missingQuality.length > 0) {
+    grade = "A";
+  } else if (missingBacking.length === 1 && missingQuality.length === 0) {
+    grade = "B";
   } else {
-    setupIntegrity = "multiple_soft_confluences_missing";
+    grade = "C";
   }
 
-  const gradeMap = {
-    full_confluence: "A",
-    one_soft_confluence_missing: "B",
-    multiple_soft_confluences_missing: "C",
-    hard_invalidation_present: "F",
+  let stateTag = "Valid, degraded";
+  if (grade === "A+") {
+    stateTag = "Full-model";
+  } else if (grade === "A") {
+    stateTag = "Valid, reduced quality";
+  } else if (grade === "B") {
+    stateTag = `Valid, ${pickPrimaryBackingIssue(missingBacking)}`;
+  } else if (grade === "C") {
+    if (missingBacking.length >= 1 && missingQuality.length > 0) {
+      stateTag = `Valid, ${pickPrimaryBackingIssue(missingBacking)} + reduced quality`;
+    } else if (missingBacking.length >= 1) {
+      stateTag = `Valid, ${pickPrimaryBackingIssue(missingBacking)}`;
+    } else if (missingQuality.length > 0) {
+      stateTag = "Valid, reduced quality";
+    } else {
+      stateTag = "Valid, weak backing";
+    }
+  } else if (grade === "F") {
+    const coreTags = missingCore.map((item) => CORE_LABEL_MAP[item] || `no ${item.toLowerCase()}`);
+    stateTag = `Invalid, ${coreTags.join(" + ")}`;
+  }
+
+  const adherenceMap = {
+    "A+": "Full",
+    A: "High",
+    B: "High",
+    C: "Reduced",
+    F: "Bad",
+  };
+  const adherence = adherenceMap[grade] || "Bad";
+
+  const legacyIntegrityMap = {
+    Full: "full_confluence",
+    High: "one_soft_confluence_missing",
+    Reduced: "multiple_soft_confluences_missing",
+    Bad: "hard_invalidation_present",
   };
 
   return {
-    confluence_score: `${all.length - missing.length}/${all.length}`,
+    confluence_score: `${rawScorePresent}/${all.length || 0}`,
     total_confluences: all.length,
     missing_confluences: missing,
-    required_missing_count: requiredMissing.length,
-    quality_missing_count: qualityMissing.length,
-    setup_integrity: setupIntegrity,
-    setup_grade: gradeMap[setupIntegrity] || "F",
+    required_missing_count: missingCore.length,
+    quality_missing_count: missingQuality.length,
+    setup_integrity: legacyIntegrityMap[adherence] || "hard_invalidation_present",
+    setup_grade: grade,
+    state_tag: stateTag,
+    model_adherence: adherence,
+    core_present_count: corePresentCount,
+    core_total_count: core.length,
+    backing_present_count: backingPresentCount,
+    backing_total_count: backing.length,
+    quality_present_count: qualityPresentCount,
+    quality_total_count: quality.length,
+    missing_core: missingCore,
+    missing_backing: missingBacking,
+    missing_quality: missingQuality,
+    raw_score_present: rawScorePresent,
+    raw_score_total: all.length,
   };
 }
 
 function buildConfluenceChecklistHtml(strategy, inputName, selectedValues) {
   const selected = new Set(selectedValues || []);
-  const rules = getConfluenceRules(strategy);
-  if (!rules.required.length && !rules.quality.length) {
+  const config = getStrategyConfig(strategy);
+  if (!config.core.length && !config.backing.length && !config.quality.length) {
     return `<div class="muted-empty">Select strategy to load checklist.</div>`;
   }
 
@@ -3410,14 +3727,41 @@ function buildConfluenceChecklistHtml(strategy, inputName, selectedValues) {
 
   return `
     <section class="confluence-block">
-      <div class="confluence-label">Required</div>
-      <div class="confluence-list">${renderItems(rules.required)}</div>
+      <div class="confluence-label">Core</div>
+      <div class="confluence-list">${renderItems(config.core)}</div>
+    </section>
+    <section class="confluence-block">
+      <div class="confluence-label">Backing</div>
+      <div class="confluence-list">${renderItems(config.backing)}</div>
     </section>
     <section class="confluence-block">
       <div class="confluence-label">Quality</div>
-      <div class="confluence-list">${renderItems(rules.quality)}</div>
+      <div class="confluence-list">${renderItems(config.quality)}</div>
     </section>
   `;
+}
+
+function syncSmcEntryTypeVisibility(strategy, { wrapEl, listEl, inputName, selectedValues }) {
+  if (!wrapEl || !listEl) {
+    return;
+  }
+  const config = getStrategyConfig(strategy);
+  const entries = config.entryTypes || [];
+  const selected = new Set(selectedValues || []);
+
+  if (!entries.length) {
+    wrapEl.hidden = true;
+    listEl.innerHTML = "";
+    return;
+  }
+
+  wrapEl.hidden = false;
+  listEl.innerHTML = entries
+    .map((entry) => {
+      const checked = selected.has(entry) ? "checked" : "";
+      return `<label class="chip"><input type="checkbox" name="${escapeHtmlAttr(inputName)}" value="${escapeHtmlAttr(entry)}" ${checked} /><span>${escapeHtml(entry)}</span></label>`;
+    })
+    .join("");
 }
 
 function renderConfluenceSummary(summaryEl, strategy, presentConfluences) {
@@ -3432,10 +3776,11 @@ function renderConfluenceSummary(summaryEl, strategy, presentConfluences) {
 
   summaryEl.className = "confluence-summary";
   summaryEl.innerHTML = `
-    <div><strong>Confluence score:</strong> ${escapeHtml(inferred.confluence_score)}</div>
+    <div class="confluence-headline"><strong>${escapeHtml(inferred.setup_grade)} - ${escapeHtml(inferred.state_tag)}</strong></div>
+    <div><strong>Adherence:</strong> ${escapeHtml(inferred.model_adherence)}</div>
+    <div><strong>Core:</strong> ${inferred.core_present_count}/${inferred.core_total_count} · <strong>Backing:</strong> ${inferred.backing_present_count}/${inferred.backing_total_count} · <strong>Quality:</strong> ${inferred.quality_present_count}/${inferred.quality_total_count}</div>
     <div><strong>Missing:</strong> ${escapeHtml(missing)}</div>
-    <div><strong>Integrity:</strong> ${escapeHtml(integrityLabel(inferred.setup_integrity))}</div>
-    <div><strong>Grade:</strong> ${escapeHtml(inferred.setup_grade)}</div>
+    <div><strong>Raw score:</strong> ${escapeHtml(inferred.confluence_score)}</div>
   `;
 }
 
@@ -3454,10 +3799,23 @@ function renderEditConfluenceChecklist(selectedValues) {
   const strategy = editStrategyEl.value;
   const selected = selectedValues || getCheckedValues(editForm, "editConfluence");
   editConfluenceChecklistEl.innerHTML = buildConfluenceChecklistHtml(strategy, "editConfluence", selected);
+  syncSmcEntryTypeVisibility(strategy, {
+    wrapEl: editSmcEntryTypesWrapEl,
+    listEl: editSmcEntryTypesEl,
+    inputName: "editSmcEntryType",
+    selectedValues: getCheckedValues(editForm, "editSmcEntryType"),
+  });
 }
 
 function updateEditConfluenceSummary() {
   renderConfluenceSummary(editConfluenceSummaryEl, editStrategyEl.value, getCheckedValues(editForm, "editConfluence"));
+  updateInvalidSaveState(
+    editSaveBtn,
+    editStrategyEl.value,
+    getCheckedValues(editForm, "editConfluence"),
+    "Save Changes",
+    "Force Save Invalid Setup"
+  );
 }
 
 async function handleCreateSubmit(event) {
@@ -3508,7 +3866,12 @@ async function handleCreateSubmit(event) {
     }
 
     const presentConfluences = getCheckedValues(form, "createConfluence");
+    if (!presentConfluences.length) {
+      failInline("Tick at least one setup checklist item.");
+      return;
+    }
     const inferred = inferConfluence(strategyEl.value, presentConfluences);
+    const smcEntryTypes = strategyEl.value === "SMC" ? getCheckedValues(form, "createSmcEntryType") : [];
 
     registerPair(pairEl.value);
     const beforeImageId = createImages.beforeBlob ? await saveImageRecord(createImages.beforeBlob) : null;
@@ -3521,9 +3884,10 @@ async function handleCreateSubmit(event) {
       id: crypto.randomUUID(),
       pair: pairEl.value,
       direction: directionEl.value,
-      lot_size: Number(lotSize.toFixed(3)),
+      lot_size: normalizeLotSizeValue(lotSize),
       sessions,
       strategy: strategyEl.value,
+      smc_entry_types: smcEntryTypes,
       present_confluences: presentConfluences,
       confluence_score: inferred.confluence_score,
       total_confluences: inferred.total_confluences,
@@ -3532,6 +3896,19 @@ async function handleCreateSubmit(event) {
       quality_missing_count: inferred.quality_missing_count,
       setup_integrity: inferred.setup_integrity,
       setup_grade: inferred.setup_grade,
+      state_tag: inferred.state_tag,
+      model_adherence: inferred.model_adherence,
+      core_present_count: inferred.core_present_count,
+      core_total_count: inferred.core_total_count,
+      backing_present_count: inferred.backing_present_count,
+      backing_total_count: inferred.backing_total_count,
+      quality_present_count: inferred.quality_present_count,
+      quality_total_count: inferred.quality_total_count,
+      missing_core: inferred.missing_core,
+      missing_backing: inferred.missing_backing,
+      missing_quality: inferred.missing_quality,
+      raw_score_present: inferred.raw_score_present,
+      raw_score_total: inferred.raw_score_total,
       outcome: outcomeEl.value,
       pnl: Number.isFinite(pnl) ? pnl : null,
       note: noteEl.value.trim(),
@@ -3553,7 +3930,7 @@ async function handleCreateSubmit(event) {
     saveDefaults({
       pair: trade.pair,
       direction: trade.direction,
-      lotSize: Number(trade.lot_size).toFixed(3),
+      lotSize: Number(trade.lot_size).toFixed(2),
       strategy: trade.strategy,
     });
 
@@ -3597,17 +3974,44 @@ function setHistoryView(mode) {
   renderHistory(getFilteredTrades());
 }
 
+function setHistoryStatusTab(status) {
+  const allowed = status === "open" || status === "all" ? status : "closed";
+  historyStatusTab = allowed;
+  historyTabClosedEl?.classList.toggle("is-active", allowed === "closed");
+  historyTabOpenEl?.classList.toggle("is-active", allowed === "open");
+  historyTabAllEl?.classList.toggle("is-active", allowed === "all");
+  openInlineEditorId = null;
+  renderHistory(getFilteredTrades());
+}
+
+function getActiveFilterCount() {
+  return [filterPairEl, filterSessionEl, filterOutcomeEl, filterStrategyEl, filterIntegrityEl].reduce(
+    (count, el) => count + (el && el.value ? 1 : 0),
+    0
+  );
+}
+
+function updateHistoryFilterMeta() {
+  if (!historyFilterMetaEl) {
+    return;
+  }
+  const active = getActiveFilterCount();
+  historyFilterMetaEl.textContent = active ? `${active} filter${active === 1 ? "" : "s"} active` : "No filters";
+}
+
 function getFilteredTrades() {
   return trades.filter((trade) => {
+    const statusOk = historyStatusTab === "all" || trade.status === historyStatusTab;
     const pairOk = !filterPairEl.value || trade.pair === filterPairEl.value;
     const sessionOk = !filterSessionEl.value || (trade.sessions || []).includes(filterSessionEl.value);
     const outcomeOk =
       !filterOutcomeEl.value ||
       (filterOutcomeEl.value === "__OPEN__" ? trade.status === "open" : trade.outcome === filterOutcomeEl.value);
     const strategyOk = !filterStrategyEl.value || trade.strategy === filterStrategyEl.value;
-    const integrityOk = !filterIntegrityEl.value || trade.setup_integrity === filterIntegrityEl.value;
+    const adherenceValue = trade.model_adherence || "Bad";
+    const integrityOk = !filterIntegrityEl.value || adherenceValue === filterIntegrityEl.value;
 
-    return pairOk && sessionOk && outcomeOk && strategyOk && integrityOk;
+    return statusOk && pairOk && sessionOk && outcomeOk && strategyOk && integrityOk;
   });
 }
 
@@ -3617,6 +4021,7 @@ function renderAll() {
 }
 
 function renderFilteredSections() {
+  updateHistoryFilterMeta();
   const rows = getFilteredTrades();
   renderAnalytics(rows);
   renderHistory(rows);
@@ -3731,6 +4136,9 @@ function createCardGroup(rows, urlMap) {
 
     const card = document.createElement("article");
     card.className = `trade-card${trade.status === "open" ? " open-trade" : ""}`;
+    card.dataset.viewId = trade.id;
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
     card.innerHTML = `
       <div class="trade-image-grid">
         ${beforeImg}
@@ -3743,17 +4151,16 @@ function createCardGroup(rows, urlMap) {
         </div>
         <div class="cap-meta">
           ${trade.status === "open" ? '<span class="open-chip">Open</span>' : ""}
-          <span class="badge ${setupClass}">${escapeHtml(integrityLabel(trade.setup_integrity))}</span>
+          <span class="badge ${setupClass}">${escapeHtml(trade.state_tag || integrityLabel(trade.model_adherence || "Bad"))}</span>
           <span class="badge ${outcomeClass}">${escapeHtml(trade.outcome || "Open")}</span>
           <span class="badge b-info">${escapeHtml(trade.strategy || "-")}</span>
           <span class="badge b-info">${escapeHtml((trade.sessions || []).join(" / "))}</span>
-          <span class="badge b-info">Lot ${Number(trade.lot_size).toFixed(3)}</span>
           <span class="badge b-info">Grade ${escapeHtml(trade.setup_grade || "-")}</span>
+          <span class="badge b-info">${escapeHtml(trade.model_adherence || "Bad")}</span>
         </div>
         <div class="cap-note">${escapeHtml(trade.note || "-")}</div>
         <div class="cap-bottom">
           <div class="${pnlClass}">${formatMoney(trade.pnl)}</div>
-          <button class="edit-btn" data-edit-id="${trade.id}" type="button" title="Edit trade">${editIconSvg()}</button>
         </div>
       </div>
     `;
@@ -3764,31 +4171,40 @@ function createCardGroup(rows, urlMap) {
   return grid;
 }
 
+function shortOutcomeLabel(trade) {
+  if (trade.status === "open") {
+    return "Open";
+  }
+  switch (trade.outcome) {
+    case "Full Win":
+      return "Win";
+    case "Full Loss":
+      return "Loss";
+    case "Partial + BE":
+      return "P+BE";
+    case "Breakeven":
+      return "BE";
+    default:
+      return "Closed";
+  }
+}
+
 function createTradeRow(trade) {
   const row = document.createElement("div");
-  const outcomeClass = badgeClassForOutcome(trade.outcome);
-  const setupClass = integrityClass(trade.setup_integrity);
   const pnlClass = Number.isFinite(trade.pnl) ? (trade.pnl >= 0 ? "pnl-pos" : "pnl-neg") : "muted-empty";
-  const showOutcomeBadge = trade.status !== "open" || (trade.outcome && trade.outcome !== "Open");
-  const outcomeBadgeHtml = showOutcomeBadge
-    ? `<span class="badge ${outcomeClass}">${escapeHtml(trade.outcome || "Open")}</span>`
-    : "";
+  const outcome = shortOutcomeLabel(trade);
+  const grade = trade.setup_grade || "-";
+  const strategy = trade.strategy || "-";
+  const glanceText = `${outcome} · Grade ${grade} · ${strategy}`;
 
   row.className = `trade-row${trade.status === "open" ? " open-trade" : ""}`;
+  row.dataset.viewId = trade.id;
+  row.setAttribute("role", "button");
+  row.tabIndex = 0;
   row.innerHTML = `
     <div class="tr-pair">${escapeHtml(trade.pair)} <span class="tr-dir">${escapeHtml(trade.direction)}</span></div>
-    <div class="tr-time">${escapeHtml(formatDateTime(trade.captured_at_utc))}</div>
-    <div class="tr-badges">
-      ${trade.status === "open" ? '<span class="open-chip">Open</span>' : ""}
-      ${outcomeBadgeHtml}
-      <span class="badge ${setupClass}">${escapeHtml(integrityLabel(trade.setup_integrity))}</span>
-      <span class="badge b-info">${escapeHtml((trade.sessions || []).join(" / "))}</span>
-      <span class="badge b-info">${escapeHtml(trade.strategy || "-")}</span>
-      <span class="badge b-info">Grade ${escapeHtml(trade.setup_grade || "-")}</span>
-    </div>
+    <div class="tr-glance" title="${escapeHtmlAttr((trade.state_tag || "") + " | " + formatDateTime(trade.captured_at_utc))}">${escapeHtml(glanceText)}</div>
     <div class="tr-pnl ${pnlClass}">${escapeHtml(formatMoney(trade.pnl))}</div>
-    <div class="tr-note">${escapeHtml(trade.note || "")}</div>
-    <button class="edit-btn" data-edit-id="${trade.id}" type="button" title="Edit trade">${editIconSvg()}</button>
   `;
   return row;
 }
@@ -3812,7 +4228,7 @@ function createInlineEditorRow(trade) {
         </select>
       </label>
       <label class="field">Lot Size
-        <input class="inline-lot" type="number" min="0.001" step="0.001" value="${Number(trade.lot_size).toFixed(3)}" />
+        <input class="inline-lot" type="number" min="0.01" step="0.01" value="${Number(normalizeLotSizeValue(trade.lot_size)).toFixed(2)}" />
       </label>
       <label class="field">Strategy
         <select class="inline-strategy">${optionsHtml(getStrategyOptionsForEdit(trade.strategy), trade.strategy, !isSingleStrategyMode())}</select>
@@ -3920,7 +4336,13 @@ function createInlineEditorRow(trade) {
       return;
     }
 
-    if (target.classList.contains("inline-strategy") || target.getAttribute("name") === "inlineConfluence") {
+    if (target.classList.contains("inline-strategy")) {
+      clearCheckedValues(row, "inlineConfluence");
+      renderInlineConfluence();
+      return;
+    }
+
+    if (target.getAttribute("name") === "inlineConfluence") {
       renderInlineConfluence();
     }
   });
@@ -3987,6 +4409,11 @@ async function handleInlineSubmit(formEl, existingTrade) {
     return;
   }
 
+  if (!presentConfluences.length) {
+    showToast("Inline edit: setup checklist required", "bad");
+    return;
+  }
+
   let capturedAtUtc = existingTrade.captured_at_utc;
   if (formEl.dataset.manualTime === "true") {
     const dateValue = formEl.querySelector(".inline-date")?.value;
@@ -4028,9 +4455,10 @@ async function handleInlineSubmit(formEl, existingTrade) {
   await updateTrade(existingTrade.id, {
     pair,
     direction,
-    lot_size: Number(lot.toFixed(3)),
+    lot_size: normalizeLotSizeValue(lot),
     sessions,
     strategy,
+    smc_entry_types: existingTrade.smc_entry_types || [],
     present_confluences: presentConfluences,
     outcome,
     pnl: Number.isFinite(pnl) ? pnl : null,
@@ -4054,23 +4482,224 @@ function onHistoryActionClick(event) {
     return;
   }
 
-  const editBtn = target.closest("[data-edit-id]");
-  if (!editBtn) {
+  if (target.closest(".inline-editor-row")) {
     return;
   }
 
-  const id = editBtn.getAttribute("data-edit-id");
+  const editBtn = target.closest("[data-edit-id]");
+  if (editBtn) {
+    const id = editBtn.getAttribute("data-edit-id");
+    if (!id) {
+      return;
+    }
+    const trade = trades.find((item) => item.id === id);
+    if (!trade) {
+      return;
+    }
+
+    if (historyViewMode === "list" && trade.status === "open") {
+      openInlineEditorId = openInlineEditorId === id ? null : id;
+      renderHistory(getFilteredTrades());
+      return;
+    }
+
+    if (!confirmClosedTradeEdit(trade)) {
+      return;
+    }
+
+    openEditModal(id);
+    return;
+  }
+
+  const viewTarget = target.closest("[data-view-id]");
+  if (!viewTarget) {
+    return;
+  }
+  const id = viewTarget.getAttribute("data-view-id");
   if (!id) {
     return;
   }
+  openTradeDetailModal(id);
+}
 
-  if (historyViewMode === "list") {
-    openInlineEditorId = openInlineEditorId === id ? null : id;
-    renderHistory(getFilteredTrades());
+function onHistoryActionKeyDown(event) {
+  if (event.key !== "Enter" && event.key !== " ") {
     return;
   }
 
-  openEditModal(id);
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  if (target.closest("button, input, select, textarea, summary")) {
+    return;
+  }
+
+  const rowOrCard = target.closest("[data-view-id]");
+  if (!rowOrCard) {
+    return;
+  }
+
+  event.preventDefault();
+  const id = rowOrCard.getAttribute("data-view-id");
+  if (!id) {
+    return;
+  }
+  openTradeDetailModal(id);
+}
+
+function confirmClosedTradeEdit(trade) {
+  if (!trade || trade.status !== "closed") {
+    return true;
+  }
+  return window.confirm("Closed trade edit check: continue only if this is a meaningful correction.");
+}
+
+function renderDetailListHtml(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return '<span class="muted-empty">None</span>';
+  }
+  return `<ul class="detail-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function releaseDetailModalUrls() {
+  detailModalUrls.forEach((url) => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // Ignore URL revocation failures.
+    }
+  });
+  detailModalUrls = [];
+}
+
+async function openTradeDetailModal(id) {
+  const trade = trades.find((item) => item.id === id);
+  if (!trade || !tradeDetailModalEl || !detailModalBodyEl) {
+    return;
+  }
+
+  activeDetailTradeId = id;
+  releaseDetailModalUrls();
+
+  let beforeUrl = "";
+  let afterUrl = "";
+
+  if (trade.before_image_id) {
+    try {
+      const beforeBlob = await dbGetImageBlob(trade.before_image_id);
+      if (beforeBlob) {
+        beforeUrl = URL.createObjectURL(beforeBlob);
+        detailModalUrls.push(beforeUrl);
+      }
+    } catch {
+      beforeUrl = "";
+    }
+  }
+
+  if (trade.after_image_id) {
+    try {
+      const afterBlob = await dbGetImageBlob(trade.after_image_id);
+      if (afterBlob) {
+        afterUrl = URL.createObjectURL(afterBlob);
+        detailModalUrls.push(afterUrl);
+      }
+    } catch {
+      afterUrl = "";
+    }
+  }
+
+  detailModalBodyEl.innerHTML = `
+    <div class="detail-image-grid">
+      ${beforeUrl ? `<img class="detail-image" src="${beforeUrl}" alt="Before screenshot" />` : '<div class="detail-image muted-empty">Before image missing</div>'}
+      ${afterUrl ? `<img class="detail-image" src="${afterUrl}" alt="After screenshot" />` : '<div class="detail-image muted-empty">After image missing</div>'}
+    </div>
+    <div class="detail-meta-grid">
+      <div><span class="detail-label">Pair</span><strong>${escapeHtml(trade.pair)} ${escapeHtml(trade.direction)}</strong></div>
+      <div><span class="detail-label">Captured</span><strong>${escapeHtml(formatDateTime(trade.captured_at_utc))}</strong></div>
+      <div><span class="detail-label">Status</span><strong>${escapeHtml(trade.status === "open" ? "Open" : "Closed")}</strong></div>
+      <div><span class="detail-label">Strategy</span><strong>${escapeHtml(trade.strategy || "-")}</strong></div>
+      <div><span class="detail-label">Sessions</span><strong>${escapeHtml((trade.sessions || []).join(" / ") || "-")}</strong></div>
+      <div><span class="detail-label">Lot / PnL</span><strong>${escapeHtml(Number(trade.lot_size || 0).toFixed(3))} / ${escapeHtml(formatMoney(trade.pnl))}</strong></div>
+      <div><span class="detail-label">Grade</span><strong>${escapeHtml(trade.setup_grade || "-")}</strong></div>
+      <div><span class="detail-label">Adherence</span><strong>${escapeHtml(trade.model_adherence || "Bad")}</strong></div>
+      <div><span class="detail-label">State</span><strong>${escapeHtml(trade.state_tag || "-")}</strong></div>
+      <div><span class="detail-label">Outcome</span><strong>${escapeHtml(trade.outcome || "Open")}</strong></div>
+    </div>
+    <div class="detail-note-block">
+      <span class="detail-label">Note</span>
+      <p>${escapeHtml(trade.note || "No note")}</p>
+    </div>
+    <div class="detail-columns">
+      <div>
+        <span class="detail-label">Missing Core</span>
+        ${renderDetailListHtml(trade.missing_core)}
+      </div>
+      <div>
+        <span class="detail-label">Missing Backing</span>
+        ${renderDetailListHtml(trade.missing_backing)}
+      </div>
+      <div>
+        <span class="detail-label">Missing Quality</span>
+        ${renderDetailListHtml(trade.missing_quality)}
+      </div>
+    </div>
+  `;
+
+  tradeDetailModalEl.style.display = "grid";
+}
+
+function closeDetailModal() {
+  if (!tradeDetailModalEl) {
+    return;
+  }
+  tradeDetailModalEl.style.display = "none";
+  activeDetailTradeId = null;
+  if (detailModalBodyEl) {
+    detailModalBodyEl.innerHTML = "";
+  }
+  releaseDetailModalUrls();
+}
+
+async function hydrateEditImagePreviews(trade) {
+  const imageTasks = [];
+  if (trade.before_image_id) {
+    imageTasks.push(dbGetImageBlob(trade.before_image_id));
+  } else {
+    imageTasks.push(Promise.resolve(null));
+  }
+  if (trade.after_image_id) {
+    imageTasks.push(dbGetImageBlob(trade.after_image_id));
+  } else {
+    imageTasks.push(Promise.resolve(null));
+  }
+
+  const [beforeResult, afterResult] = await Promise.allSettled(imageTasks);
+  let missingCount = 0;
+
+  if (trade.before_image_id) {
+    const beforeBlob = beforeResult.status === "fulfilled" ? beforeResult.value : null;
+    if (beforeBlob) {
+      editBeforeBinder.setPreviewBlob(beforeBlob);
+    } else {
+      missingCount += 1;
+    }
+  }
+
+  if (trade.after_image_id) {
+    const afterBlob = afterResult.status === "fulfilled" ? afterResult.value : null;
+    if (afterBlob) {
+      editAfterBinder.setPreviewBlob(afterBlob);
+    } else {
+      missingCount += 1;
+    }
+  }
+
+  if (missingCount > 0) {
+    incrementImageHydrationMisses(missingCount);
+    showToast("Some saved screenshots could not be loaded. You can replace them.", "bad");
+  }
 }
 
 async function openEditModal(id) {
@@ -4085,8 +4714,9 @@ async function openEditModal(id) {
   editPairEl.value = trade.pair;
   editPairEl.dataset.prevPair = normalizePairCode(trade.pair);
   editDirectionEl.value = trade.direction;
-  editLotSizeEl.value = Number(trade.lot_size).toFixed(3);
+  editLotSizeEl.value = Number(normalizeLotSizeValue(trade.lot_size)).toFixed(2);
   editStrategyEl.value = trade.strategy || "";
+  editStrategyEl.dataset.prevStrategy = normalizeStrategyName(editStrategyEl.value);
   if (isSingleStrategyMode() && getAllowedStrategies().includes(editStrategyEl.value) && getStrategyOptionsForEdit(editStrategyEl.value).length === 1) {
     editStrategyEl.disabled = true;
   }
@@ -4107,6 +4737,12 @@ async function openEditModal(id) {
 
   syncEditSessions(trade.sessions || []);
   renderEditConfluenceChecklist(trade.present_confluences || []);
+  syncSmcEntryTypeVisibility(editStrategyEl.value, {
+    wrapEl: editSmcEntryTypesWrapEl,
+    listEl: editSmcEntryTypesEl,
+    inputName: "editSmcEntryType",
+    selectedValues: trade.smc_entry_types || [],
+  });
   updateEditConfluenceSummary();
 
   editImages.beforeImageId = trade.before_image_id || null;
@@ -4118,20 +4754,7 @@ async function openEditModal(id) {
 
   editBeforeBinder.clearSilent();
   editAfterBinder.clearSilent();
-
-  if (trade.before_image_id) {
-    const beforeBlob = await dbGetImageBlob(trade.before_image_id);
-    if (beforeBlob) {
-      editBeforeBinder.setPreviewBlob(beforeBlob);
-    }
-  }
-
-  if (trade.after_image_id) {
-    const afterBlob = await dbGetImageBlob(trade.after_image_id);
-    if (afterBlob) {
-      editAfterBinder.setPreviewBlob(afterBlob);
-    }
-  }
+  await hydrateEditImagePreviews(trade);
 
   configureDeleteButton(deleteTradeBtn, trade, async () => {
     await deleteTrade(trade.id);
@@ -4180,6 +4803,13 @@ async function handleEditSubmit(event) {
     return;
   }
 
+  const presentConfluences = getCheckedValues(editForm, "editConfluence");
+  if (!presentConfluences.length) {
+    editErrorEl.textContent = "Tick at least one setup checklist item.";
+    showToast("Setup checklist required", "bad");
+    return;
+  }
+
   let capturedAtUtc = trade.captured_at_utc;
   if (editManualTimeEnabled) {
     if (!editDateEl.value || !editTimeEl.value) {
@@ -4207,10 +4837,11 @@ async function handleEditSubmit(event) {
   await updateTrade(trade.id, {
     pair: editPairEl.value,
     direction: editDirectionEl.value,
-    lot_size: Number(lot.toFixed(3)),
+    lot_size: normalizeLotSizeValue(lot),
     sessions,
     strategy: editStrategyEl.value,
-    present_confluences: getCheckedValues(editForm, "editConfluence"),
+    smc_entry_types: editStrategyEl.value === "SMC" ? getCheckedValues(editForm, "editSmcEntryType") : [],
+    present_confluences: presentConfluences,
     outcome: editOutcomeEl.value,
     pnl: Number.isFinite(pnl) ? pnl : null,
     note: editNoteEl.value.trim(),
@@ -4256,6 +4887,7 @@ async function updateTrade(id, patch) {
     lot_size: patch.lot_size,
     sessions: patch.sessions,
     strategy: patch.strategy,
+    smc_entry_types: Array.isArray(patch.smc_entry_types) ? patch.smc_entry_types : current.smc_entry_types,
     present_confluences: patch.present_confluences,
     confluence_score: inferred.confluence_score,
     total_confluences: inferred.total_confluences,
@@ -4264,6 +4896,19 @@ async function updateTrade(id, patch) {
     quality_missing_count: inferred.quality_missing_count,
     setup_integrity: inferred.setup_integrity,
     setup_grade: inferred.setup_grade,
+    state_tag: inferred.state_tag,
+    model_adherence: inferred.model_adherence,
+    core_present_count: inferred.core_present_count,
+    core_total_count: inferred.core_total_count,
+    backing_present_count: inferred.backing_present_count,
+    backing_total_count: inferred.backing_total_count,
+    quality_present_count: inferred.quality_present_count,
+    quality_total_count: inferred.quality_total_count,
+    missing_core: inferred.missing_core,
+    missing_backing: inferred.missing_backing,
+    missing_quality: inferred.missing_quality,
+    raw_score_present: inferred.raw_score_present,
+    raw_score_total: inferred.raw_score_total,
     outcome: patch.outcome,
     pnl: patch.pnl,
     note: patch.note,
@@ -5207,6 +5852,7 @@ function renderAnalyticsVisuals(tab, analytics) {
       ["Image Completeness", `${analytics.imageCompletenessRate.toFixed(1)}%`],
       ["Before Presence", `${analytics.beforePresenceRate.toFixed(1)}%`],
       ["After Presence", `${analytics.afterPresenceRate.toFixed(1)}%`],
+      ["Image Hydration Misses", String(analytics.imageHydrationMisses)],
       ["Notes Used", `${analytics.noteUsageRate.toFixed(1)}%`],
       ["Median Note Length", `${analytics.medianNoteLength.toFixed(0)} chars`],
       ["Avg Edit Count", analytics.avgEditCount.toFixed(2)],
@@ -5448,6 +6094,8 @@ function formatMetricValue(key, analytics) {
       return `${analytics.beforePresenceRate.toFixed(1)}%`;
     case "after_presence_rate":
       return `${analytics.afterPresenceRate.toFixed(1)}%`;
+    case "image_hydration_misses":
+      return String(analytics.imageHydrationMisses);
     case "note_usage_and_median_length":
       return `${analytics.noteUsageRate.toFixed(1)}% used | median ${analytics.medianNoteLength.toFixed(0)} chars`;
     case "edit_frequency_per_trade":
@@ -6063,6 +6711,7 @@ function computeAnalytics(rows) {
     imageCompletenessRate,
     beforePresenceRate,
     afterPresenceRate,
+    imageHydrationMisses,
     withAfterAvgPnl,
     withoutAfterAvgPnl,
     afterImageOutcomeDelta,
@@ -6138,14 +6787,28 @@ function exportCsv(rows, filename) {
     "lot_size",
     "sessions",
     "strategy",
+    "smc_entry_types",
     "present_confluences",
     "confluence_score",
+    "raw_score_present",
+    "raw_score_total",
     "total_confluences",
     "missing_confluences",
+    "missing_core",
+    "missing_backing",
+    "missing_quality",
+    "core_present_count",
+    "core_total_count",
+    "backing_present_count",
+    "backing_total_count",
+    "quality_present_count",
+    "quality_total_count",
     "required_missing_count",
     "quality_missing_count",
     "setup_integrity",
     "setup_grade",
+    "state_tag",
+    "model_adherence",
     "outcome",
     "status",
     "pnl_usd",
@@ -6166,14 +6829,28 @@ function exportCsv(rows, filename) {
     Number(row.lot_size).toFixed(3),
     (row.sessions || []).join("|"),
     row.strategy,
+    (row.smc_entry_types || []).join("|"),
     (row.present_confluences || []).join("|"),
     row.confluence_score,
+    row.raw_score_present,
+    row.raw_score_total,
     row.total_confluences,
     (row.missing_confluences || []).join("|"),
+    (row.missing_core || []).join("|"),
+    (row.missing_backing || []).join("|"),
+    (row.missing_quality || []).join("|"),
+    row.core_present_count,
+    row.core_total_count,
+    row.backing_present_count,
+    row.backing_total_count,
+    row.quality_present_count,
+    row.quality_total_count,
     row.required_missing_count,
     row.quality_missing_count,
     row.setup_integrity,
     row.setup_grade,
+    row.state_tag || "",
+    row.model_adherence || "",
     row.outcome || "",
     row.status,
     Number.isFinite(row.pnl) ? row.pnl : "",
@@ -6405,9 +7082,10 @@ function normalizeTrade(trade) {
     ...trade,
     pair: normalizePairCode(trade.pair || ""),
     direction: trade.direction || "",
-    lot_size: Number(trade.lot_size || 0.001),
+    lot_size: normalizeLotSizeValue(trade.lot_size || DEFAULT_LOT_SIZE),
     sessions: orderSessions(Array.isArray(trade.sessions) ? trade.sessions : []),
     strategy,
+    smc_entry_types: Array.isArray(trade.smc_entry_types) ? trade.smc_entry_types : [],
     present_confluences: presentConfluences,
     confluence_score: trade.confluence_score || inferred.confluence_score,
     total_confluences: Number.isFinite(trade.total_confluences) ? trade.total_confluences : inferred.total_confluences,
@@ -6420,6 +7098,23 @@ function normalizeTrade(trade) {
       : inferred.quality_missing_count,
     setup_integrity: trade.setup_integrity || inferred.setup_integrity,
     setup_grade: trade.setup_grade || inferred.setup_grade,
+    state_tag: trade.state_tag || inferred.state_tag,
+    model_adherence: trade.model_adherence || inferred.model_adherence,
+    core_present_count: Number.isFinite(trade.core_present_count) ? trade.core_present_count : inferred.core_present_count,
+    core_total_count: Number.isFinite(trade.core_total_count) ? trade.core_total_count : inferred.core_total_count,
+    backing_present_count: Number.isFinite(trade.backing_present_count)
+      ? trade.backing_present_count
+      : inferred.backing_present_count,
+    backing_total_count: Number.isFinite(trade.backing_total_count) ? trade.backing_total_count : inferred.backing_total_count,
+    quality_present_count: Number.isFinite(trade.quality_present_count)
+      ? trade.quality_present_count
+      : inferred.quality_present_count,
+    quality_total_count: Number.isFinite(trade.quality_total_count) ? trade.quality_total_count : inferred.quality_total_count,
+    missing_core: Array.isArray(trade.missing_core) ? trade.missing_core : inferred.missing_core,
+    missing_backing: Array.isArray(trade.missing_backing) ? trade.missing_backing : inferred.missing_backing,
+    missing_quality: Array.isArray(trade.missing_quality) ? trade.missing_quality : inferred.missing_quality,
+    raw_score_present: Number.isFinite(trade.raw_score_present) ? trade.raw_score_present : inferred.raw_score_present,
+    raw_score_total: Number.isFinite(trade.raw_score_total) ? trade.raw_score_total : inferred.raw_score_total,
     outcome: trade.outcome || "",
     pnl: Number.isFinite(trade.pnl) ? trade.pnl : null,
     note: trade.note || "",
@@ -6434,6 +7129,35 @@ function normalizeTrade(trade) {
     created_at: trade.created_at || new Date().toISOString(),
     updated_at: trade.updated_at || new Date().toISOString(),
   };
+}
+
+async function migrateTradeLotSizesIfNeeded() {
+  if (localStorage.getItem(LOT_SIZE_MIGRATION_KEY) === "done") {
+    return;
+  }
+
+  let migratedCount = 0;
+  for (let index = 0; index < trades.length; index += 1) {
+    const trade = trades[index];
+    const normalizedLot = normalizeLotSizeValue(trade.lot_size);
+    if (Math.abs(Number(trade.lot_size || 0) - normalizedLot) < 0.0001) {
+      continue;
+    }
+
+    const nextTrade = normalizeTrade({
+      ...trade,
+      lot_size: normalizedLot,
+      updated_at: new Date().toISOString(),
+    });
+    trades[index] = nextTrade;
+    await saveTradeRecord(nextTrade);
+    migratedCount += 1;
+  }
+
+  localStorage.setItem(LOT_SIZE_MIGRATION_KEY, "done");
+  if (migratedCount > 0) {
+    showToast(`Lot migration done: ${migratedCount} trades updated`, "ok");
+  }
 }
 
 async function loadTradesFromDb() {
