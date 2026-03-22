@@ -114,6 +114,13 @@
                 <option value="Full Loss">Full Loss</option>
               </select>
             </label>
+            <label class="field settings-switch">
+              Two Bullets trade?
+              <span class="settings-switch-row">
+                <input id="twoBulletsToggle" name="twoBulletsToggle" type="checkbox" />
+                <span>Enable split management</span>
+              </span>
+            </label>
             <label id="entryPnlField" class="field entry-field-secondary is-secondary">
               PnL ($)
               <input id="pnl" name="pnl" type="text" placeholder="+3.50 or -1.20" />
@@ -133,6 +140,52 @@
                 <button type="button" class="lot-preset" data-lot-preset="0.10">0.10</button>
               </div>
             </label>
+          </div>
+
+          <div id="twoBulletsCreatePanel" class="confluence-card two-bullets-panel" hidden>
+            <div class="section-head section-head-tight">
+              <span>Two Bullets</span>
+              <span class="micro-hint">Per bullet — total exposure is 2× this value</span>
+            </div>
+            <div class="compact-grid two-bullets-grid">
+              <label class="field">
+                B1 Outcome
+                <select id="b1Outcome" name="b1Outcome">
+                  <option value="Open">Open</option>
+                  <option value="Win">Win</option>
+                  <option value="Loss">Loss</option>
+                </select>
+              </label>
+              <label class="field">
+                B2 Outcome
+                <select id="b2Outcome" name="b2Outcome">
+                  <option value="Open">Open</option>
+                  <option value="Win">Win (hit target)</option>
+                  <option value="Breakeven">Breakeven</option>
+                  <option value="Loss">Loss</option>
+                </select>
+              </label>
+              <label class="field">
+                B2 Target R:R
+                <input id="b2TargetRr" name="b2TargetRr" type="number" step="0.1" min="1" placeholder="3" />
+              </label>
+              <label class="field">
+                B1 PnL ($)
+                <input id="b1Pnl" name="b1Pnl" type="text" placeholder="+1.00 or -1.00" />
+              </label>
+              <label class="field">
+                B2 PnL ($)
+                <input id="b2Pnl" name="b2Pnl" type="text" placeholder="+3.00 or 0" />
+              </label>
+              <label class="field">
+                Total PnL ($)
+                <input id="twoBulletsTotalPnl" name="twoBulletsTotalPnl" type="text" readonly />
+              </label>
+              <label class="field note-field">
+                Effective R:R
+                <input id="twoBulletsEffectiveRr" name="twoBulletsEffectiveRr" type="text" readonly />
+              </label>
+            </div>
           </div>
 
           <div id="createConfluenceDetails" class="confluence-card" hidden>
@@ -468,8 +521,61 @@
                 <option value="Full Loss">Full Loss</option>
               </select>
             </label>
+            <label class="field settings-switch">
+              Two Bullets trade?
+              <span class="settings-switch-row">
+                <input id="editTwoBulletsToggle" type="checkbox" />
+                <span>Enable split management</span>
+              </span>
+            </label>
             <label class="field">PnL ($)<input id="editPnl" type="text" /></label>
             <label class="field note-field">Note<input id="editNote" type="text" maxlength="240" /></label>
+          </div>
+
+          <div id="twoBulletsEditPanel" class="confluence-card two-bullets-panel" hidden>
+            <div class="section-head section-head-tight">
+              <span>Two Bullets</span>
+              <span class="micro-hint">Per bullet — total exposure is 2× this value</span>
+            </div>
+            <div class="compact-grid two-bullets-grid">
+              <label class="field">
+                B1 Outcome
+                <select id="editB1Outcome">
+                  <option value="Open">Open</option>
+                  <option value="Win">Win</option>
+                  <option value="Loss">Loss</option>
+                </select>
+              </label>
+              <label class="field">
+                B2 Outcome
+                <select id="editB2Outcome">
+                  <option value="Open">Open</option>
+                  <option value="Win">Win (hit target)</option>
+                  <option value="Breakeven">Breakeven</option>
+                  <option value="Loss">Loss</option>
+                </select>
+              </label>
+              <label class="field">
+                B2 Target R:R
+                <input id="editB2TargetRr" type="number" step="0.1" min="1" placeholder="3" />
+              </label>
+              <label class="field">
+                B1 PnL ($)
+                <input id="editB1Pnl" type="text" placeholder="+1.00 or -1.00" />
+              </label>
+              <label class="field">
+                B2 PnL ($)
+                <input id="editB2Pnl" type="text" placeholder="+3.00 or 0" />
+              </label>
+              <label class="field">
+                Total PnL ($)
+                <input id="editTwoBulletsTotalPnl" type="text" readonly />
+              </label>
+              <label class="field note-field">
+                Effective R:R
+                <input id="editTwoBulletsEffectiveRr" type="text" readonly />
+              </label>
+            </div>
           </div>
 
           <details id="editConfluenceDetails" class="confluence-card confluence-collapsible">

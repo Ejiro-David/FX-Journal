@@ -28,6 +28,8 @@ const ADD_PAIR_OPTION_VALUE = "__ADD_PAIR_OPTION__";
 
 const PAIRS = ["GBPUSD", "EURUSD", "USDJPY", "XAUUSD", "NAS100"];
 const OUTCOMES = ["Full Win", "Partial + BE", "Breakeven", "Full Loss"];
+const TWO_BULLETS_B1_OUTCOMES = ["Open", "Win", "Loss"];
+const TWO_BULLETS_B2_OUTCOMES = ["Open", "Win", "Breakeven", "Loss"];
 const DEFAULT_SESSION_OPTIONS = ["London", "NY", "Asian"];
 const DEFAULT_LOT_SIZE = 0.01;
 const LOT_SIZE_STEP = 0.01;
@@ -1123,6 +1125,94 @@ function validatePnlInput(rawValue) {
   return null;
 }
 
+function normalizeB1Outcome(value) {
+  const normalized = String(value || "Open").trim();
+  return TWO_BULLETS_B1_OUTCOMES.includes(normalized) ? normalized : "Open";
+}
+
+function normalizeB2Outcome(value) {
+  const normalized = String(value || "Open").trim();
+  return TWO_BULLETS_B2_OUTCOMES.includes(normalized) ? normalized : "Open";
+}
+
+function normalizeB2TargetRr(value) {
+  if (value === "" || value == null) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function computeTwoBulletsDerived(twoBulletsValue) {
+  const twoBullets = twoBulletsValue && typeof twoBulletsValue === "object" ? twoBulletsValue : {};
+  const b1 = twoBullets.b1 && typeof twoBullets.b1 === "object" ? twoBullets.b1 : {};
+  const b2 = twoBullets.b2 && typeof twoBullets.b2 === "object" ? twoBullets.b2 : {};
+
+  const b1Outcome = normalizeB1Outcome(b1.outcome);
+  const b2Outcome = normalizeB2Outcome(b2.outcome);
+  const b1Pnl = Number.isFinite(b1.pnl) ? Number(b1.pnl) : null;
+  const b2Pnl = Number.isFinite(b2.pnl) ? Number(b2.pnl) : null;
+  const totalPnl = Number.isFinite(b1Pnl) && Number.isFinite(b2Pnl) ? b1Pnl + b2Pnl : null;
+
+  const baseRisk = Number.isFinite(b1.risk_amount)
+    ? Math.abs(Number(b1.risk_amount))
+    : Number.isFinite(b1Pnl)
+      ? Math.abs(b1Pnl)
+      : null;
+
+  const isOpen = b1Outcome === "Open" || b2Outcome === "Open";
+  const isPartial = b1Outcome === "Win" && b2Outcome === "Open";
+  const status = isOpen ? "open" : "closed";
+
+  let outcome = "";
+  if (status === "closed") {
+    if (b1Outcome === "Loss" && b2Outcome === "Loss") {
+      outcome = "Full Loss";
+    } else if (b1Outcome === "Win" && b2Outcome === "Breakeven") {
+      outcome = "Partial + BE";
+    } else if (Number.isFinite(totalPnl)) {
+      if (totalPnl > 0) {
+        outcome = "Full Win";
+      } else if (totalPnl < 0) {
+        outcome = "Full Loss";
+      } else {
+        outcome = "Breakeven";
+      }
+    }
+  }
+
+  let effectiveRrLabel = "-";
+  if (b1Outcome === "Loss" && b2Outcome === "Loss") {
+    effectiveRrLabel = "-1R";
+  } else if (b1Outcome === "Win" && b2Outcome === "Breakeven") {
+    effectiveRrLabel = "1:1 (runner BE)";
+  } else if (b1Outcome === "Win" && b2Outcome === "Open") {
+    effectiveRrLabel = "Partial — B2 running";
+  } else if (b2Outcome === "Win" && Number.isFinite(totalPnl) && Number.isFinite(baseRisk) && baseRisk > 0) {
+    effectiveRrLabel = `1:${(totalPnl / baseRisk).toFixed(1)}`;
+  } else if (Number.isFinite(totalPnl) && Number.isFinite(baseRisk) && baseRisk > 0 && status === "closed") {
+    effectiveRrLabel = `${(totalPnl / baseRisk).toFixed(1)}R`;
+  }
+
+  return {
+    b1Outcome,
+    b2Outcome,
+    b1Pnl,
+    b2Pnl,
+    totalPnl,
+    baseRisk,
+    isOpen,
+    isPartial,
+    status,
+    outcome,
+    effectiveRrLabel,
+  };
+}
+
+function isTwoBulletsTrade(trade) {
+  return Boolean(trade?.two_bullets);
+}
+
 function getMissingEntryFields({ pair, direction, strategy, sessions }) {
   const missing = [];
   if (!pair) {
@@ -1544,6 +1634,15 @@ const lotSizeEl = document.getElementById("lotSize");
 const strategyEl = document.getElementById("strategy");
 const outcomeEl = document.getElementById("outcome");
 const pnlEl = document.getElementById("pnl");
+const twoBulletsToggleEl = document.getElementById("twoBulletsToggle");
+const twoBulletsCreatePanelEl = document.getElementById("twoBulletsCreatePanel");
+const b1OutcomeEl = document.getElementById("b1Outcome");
+const b2OutcomeEl = document.getElementById("b2Outcome");
+const b1PnlEl = document.getElementById("b1Pnl");
+const b2PnlEl = document.getElementById("b2Pnl");
+const b2TargetRrEl = document.getElementById("b2TargetRr");
+const twoBulletsTotalPnlEl = document.getElementById("twoBulletsTotalPnl");
+const twoBulletsEffectiveRrEl = document.getElementById("twoBulletsEffectiveRr");
 const noteEl = document.getElementById("note");
 const createConfluenceDetailsEl = document.getElementById("createConfluenceDetails");
 const confluenceChecklistEl = document.getElementById("confluenceChecklist");
@@ -1641,6 +1740,15 @@ const editLotSizeEl = document.getElementById("editLotSize");
 const editStrategyEl = document.getElementById("editStrategy");
 const editOutcomeEl = document.getElementById("editOutcome");
 const editPnlEl = document.getElementById("editPnl");
+const editTwoBulletsToggleEl = document.getElementById("editTwoBulletsToggle");
+const twoBulletsEditPanelEl = document.getElementById("twoBulletsEditPanel");
+const editB1OutcomeEl = document.getElementById("editB1Outcome");
+const editB2OutcomeEl = document.getElementById("editB2Outcome");
+const editB1PnlEl = document.getElementById("editB1Pnl");
+const editB2PnlEl = document.getElementById("editB2Pnl");
+const editB2TargetRrEl = document.getElementById("editB2TargetRr");
+const editTwoBulletsTotalPnlEl = document.getElementById("editTwoBulletsTotalPnl");
+const editTwoBulletsEffectiveRrEl = document.getElementById("editTwoBulletsEffectiveRr");
 const editNoteEl = document.getElementById("editNote");
 const editConfluenceDetailsEl = document.getElementById("editConfluenceDetails");
 const editConfluenceChecklistEl = document.getElementById("editConfluenceChecklist");
@@ -2072,9 +2180,61 @@ function bindEvents() {
     syncEntryFlowState({ forceChecklistRerender: true });
   });
   outcomeEl.addEventListener("change", syncEntryFlowState);
+  twoBulletsToggleEl?.addEventListener("change", () => {
+    if (!twoBulletsToggleEl.checked) {
+      const hasTwoBulletsData = Boolean(
+        String(b1PnlEl?.value || "").trim() ||
+          String(b2PnlEl?.value || "").trim() ||
+          normalizeB1Outcome(b1OutcomeEl?.value) !== "Open" ||
+          normalizeB2Outcome(b2OutcomeEl?.value) !== "Open" ||
+          String(b2TargetRrEl?.value || "").trim()
+      );
+      if (hasTwoBulletsData) {
+        const ok = window.confirm("Turn off Two Bullets and clear B1/B2 data?");
+        if (!ok) {
+          twoBulletsToggleEl.checked = true;
+          return;
+        }
+      }
+      syncTwoBulletsCreateUi({ clearValues: true });
+    } else {
+      syncTwoBulletsCreateUi();
+    }
+    syncEntryFlowState({ forceChecklistRerender: false });
+  });
+  [b1OutcomeEl, b2OutcomeEl, b1PnlEl, b2PnlEl, b2TargetRrEl].forEach((el) => {
+    el?.addEventListener("input", updateTwoBulletsCreateDerivedFields);
+    el?.addEventListener("change", updateTwoBulletsCreateDerivedFields);
+  });
   confluenceChecklistEl.addEventListener("change", syncEntryFlowState);
   form.addEventListener("input", syncEntryFlowState);
   form.addEventListener("change", syncEntryFlowState);
+
+  editTwoBulletsToggleEl?.addEventListener("change", () => {
+    if (!editTwoBulletsToggleEl.checked) {
+      const hasTwoBulletsData = Boolean(
+        String(editB1PnlEl?.value || "").trim() ||
+          String(editB2PnlEl?.value || "").trim() ||
+          normalizeB1Outcome(editB1OutcomeEl?.value) !== "Open" ||
+          normalizeB2Outcome(editB2OutcomeEl?.value) !== "Open" ||
+          String(editB2TargetRrEl?.value || "").trim()
+      );
+      if (hasTwoBulletsData) {
+        const ok = window.confirm("Turn off Two Bullets and clear B1/B2 data?");
+        if (!ok) {
+          editTwoBulletsToggleEl.checked = true;
+          return;
+        }
+      }
+      syncTwoBulletsEditUi({ clearValues: true });
+    } else {
+      syncTwoBulletsEditUi();
+    }
+  });
+  [editB1OutcomeEl, editB2OutcomeEl, editB1PnlEl, editB2PnlEl, editB2TargetRrEl].forEach((el) => {
+    el?.addEventListener("input", updateTwoBulletsEditDerivedFields);
+    el?.addEventListener("change", updateTwoBulletsEditDerivedFields);
+  });
 
   [filterPairEl, filterDirectionEl, filterSessionEl, filterOutcomeEl, filterStrategyEl, filterIntegrityEl, filterGradeEl, filterScreenshotsEl].forEach((el) => {
     if (!el) {
@@ -2234,20 +2394,78 @@ function bindEvents() {
         return;
       }
 
-      const outcomeEl = detailModalBodyEl?.querySelector("#detailCloseOutcome");
-      const pnlEl = detailModalBodyEl?.querySelector("#detailClosePnl");
       const afterFileEl = detailModalBodyEl?.querySelector("#detailCloseAfterFile");
 
-      const outcome = String(outcomeEl?.value || "");
-      const pnl = parsePnl(pnlEl?.value || "");
-      const pnlError = validatePnlInput(pnlEl?.value || "");
-      if (!outcome) {
-        showToast("Select outcome to close trade", "bad");
-        return;
-      }
-      if (pnlError || pnl == null) {
-        showToast("Enter valid PnL to close trade", "bad");
-        return;
+      let finalOutcome = trade.outcome || "";
+      let finalPnl = Number.isFinite(trade.pnl) ? trade.pnl : null;
+      let finalStatus = trade.status;
+      let b1Patch = trade.b1 || null;
+      let b2Patch = trade.b2 || null;
+
+      if (isTwoBulletsTrade(trade)) {
+        const b1Outcome = normalizeB1Outcome(detailModalBodyEl?.querySelector("#detailCloseB1Outcome")?.value);
+        const b2Outcome = normalizeB2Outcome(detailModalBodyEl?.querySelector("#detailCloseB2Outcome")?.value);
+        const b1PnlInput = detailModalBodyEl?.querySelector("#detailCloseB1Pnl")?.value || "";
+        const b2PnlInput = detailModalBodyEl?.querySelector("#detailCloseB2Pnl")?.value || "";
+        const b1Pnl = parsePnl(b1PnlInput);
+        const b2Pnl = parsePnl(b2PnlInput);
+
+        if (validatePnlInput(b1PnlInput) || validatePnlInput(b2PnlInput)) {
+          showToast("Enter valid B1/B2 PnL", "bad");
+          return;
+        }
+        if (b1Outcome !== "Open" && !Number.isFinite(b1Pnl)) {
+          showToast("B1 PnL required when B1 is closed", "bad");
+          return;
+        }
+        if (b2Outcome !== "Open" && !Number.isFinite(b2Pnl)) {
+          showToast("B2 PnL required when B2 is closed", "bad");
+          return;
+        }
+
+        const derived = computeTwoBulletsDerived({
+          b1: {
+            outcome: b1Outcome,
+            pnl: b1Pnl,
+            risk_amount: Number.isFinite(b1Pnl) ? Math.abs(b1Pnl) : trade.b1?.risk_amount,
+          },
+          b2: {
+            outcome: b2Outcome,
+            pnl: b2Pnl,
+            target_rr: normalizeB2TargetRr(detailModalBodyEl?.querySelector("#detailCloseB2TargetRr")?.value),
+          },
+        });
+
+        finalOutcome = derived.outcome;
+        finalPnl = Number.isFinite(derived.totalPnl) ? derived.totalPnl : null;
+        finalStatus = derived.status;
+        b1Patch = {
+          outcome: derived.b1Outcome,
+          pnl: Number.isFinite(derived.b1Pnl) ? derived.b1Pnl : null,
+          risk_amount: Number.isFinite(derived.baseRisk) ? derived.baseRisk : null,
+        };
+        b2Patch = {
+          outcome: derived.b2Outcome,
+          pnl: Number.isFinite(derived.b2Pnl) ? derived.b2Pnl : null,
+          target_rr: normalizeB2TargetRr(detailModalBodyEl?.querySelector("#detailCloseB2TargetRr")?.value),
+        };
+      } else {
+        const outcomeEl = detailModalBodyEl?.querySelector("#detailCloseOutcome");
+        const pnlEl = detailModalBodyEl?.querySelector("#detailClosePnl");
+        const outcome = String(outcomeEl?.value || "");
+        const pnl = parsePnl(pnlEl?.value || "");
+        const pnlError = validatePnlInput(pnlEl?.value || "");
+        if (!outcome) {
+          showToast("Select outcome to close trade", "bad");
+          return;
+        }
+        if (pnlError || pnl == null) {
+          showToast("Enter valid PnL to close trade", "bad");
+          return;
+        }
+        finalOutcome = outcome;
+        finalPnl = pnl;
+        finalStatus = "closed";
       }
 
       const selectedFile = afterFileEl?.files?.[0] || null;
@@ -2269,8 +2487,12 @@ function bindEvents() {
         strategy: trade.strategy,
         smc_entry_types: trade.smc_entry_types || [],
         present_confluences: trade.present_confluences || [],
-        outcome,
-        pnl,
+        outcome: finalOutcome,
+        pnl: finalPnl,
+        status: finalStatus,
+        two_bullets: Boolean(trade.two_bullets),
+        b1: b1Patch,
+        b2: b2Patch,
         note: trade.note || "",
         captured_at_utc: trade.captured_at_utc,
         timezone_offset_min: Number.isFinite(trade.timezone_offset_min) ? trade.timezone_offset_min : new Date().getTimezoneOffset(),
@@ -2820,20 +3042,158 @@ function applySavedDefaults() {
   pairEl.dataset.prevPair = normalizePairCode(pairEl.value);
   strategyEl.dataset.prevStrategy = normalizeStrategyName(strategyEl.value);
 
+  if (twoBulletsToggleEl) {
+    twoBulletsToggleEl.checked = false;
+  }
+  syncTwoBulletsCreateUi({ clearValues: true });
+
   syncEntryFlowState({ forceChecklistRerender: true });
   syncLotPresetState();
 }
 
+function updateTwoBulletsCreateDerivedFields() {
+  if (!twoBulletsToggleEl?.checked) {
+    if (twoBulletsTotalPnlEl) {
+      twoBulletsTotalPnlEl.value = "";
+    }
+    if (twoBulletsEffectiveRrEl) {
+      twoBulletsEffectiveRrEl.value = "";
+    }
+    return;
+  }
+
+  const b1Pnl = parsePnl(b1PnlEl?.value || "");
+  const b2Pnl = parsePnl(b2PnlEl?.value || "");
+  const derived = computeTwoBulletsDerived({
+    b1: {
+      outcome: b1OutcomeEl?.value,
+      pnl: b1Pnl,
+      risk_amount: b1Pnl,
+    },
+    b2: {
+      outcome: b2OutcomeEl?.value,
+      pnl: b2Pnl,
+      target_rr: normalizeB2TargetRr(b2TargetRrEl?.value),
+    },
+  });
+
+  if (twoBulletsTotalPnlEl) {
+    twoBulletsTotalPnlEl.value = Number.isFinite(derived.totalPnl) ? String(derived.totalPnl.toFixed(2)) : "";
+  }
+  if (twoBulletsEffectiveRrEl) {
+    twoBulletsEffectiveRrEl.value = derived.effectiveRrLabel;
+  }
+}
+
+function updateTwoBulletsEditDerivedFields() {
+  if (!editTwoBulletsToggleEl?.checked) {
+    if (editTwoBulletsTotalPnlEl) {
+      editTwoBulletsTotalPnlEl.value = "";
+    }
+    if (editTwoBulletsEffectiveRrEl) {
+      editTwoBulletsEffectiveRrEl.value = "";
+    }
+    return;
+  }
+
+  const b1Pnl = parsePnl(editB1PnlEl?.value || "");
+  const b2Pnl = parsePnl(editB2PnlEl?.value || "");
+  const derived = computeTwoBulletsDerived({
+    b1: {
+      outcome: editB1OutcomeEl?.value,
+      pnl: b1Pnl,
+      risk_amount: b1Pnl,
+    },
+    b2: {
+      outcome: editB2OutcomeEl?.value,
+      pnl: b2Pnl,
+      target_rr: normalizeB2TargetRr(editB2TargetRrEl?.value),
+    },
+  });
+
+  if (editTwoBulletsTotalPnlEl) {
+    editTwoBulletsTotalPnlEl.value = Number.isFinite(derived.totalPnl) ? String(derived.totalPnl.toFixed(2)) : "";
+  }
+  if (editTwoBulletsEffectiveRrEl) {
+    editTwoBulletsEffectiveRrEl.value = derived.effectiveRrLabel;
+  }
+}
+
+function clearTwoBulletsCreateValues() {
+  if (b1OutcomeEl) b1OutcomeEl.value = "Open";
+  if (b2OutcomeEl) b2OutcomeEl.value = "Open";
+  if (b1PnlEl) b1PnlEl.value = "";
+  if (b2PnlEl) b2PnlEl.value = "";
+  if (b2TargetRrEl) b2TargetRrEl.value = "";
+}
+
+function clearTwoBulletsEditValues() {
+  if (editB1OutcomeEl) editB1OutcomeEl.value = "Open";
+  if (editB2OutcomeEl) editB2OutcomeEl.value = "Open";
+  if (editB1PnlEl) editB1PnlEl.value = "";
+  if (editB2PnlEl) editB2PnlEl.value = "";
+  if (editB2TargetRrEl) editB2TargetRrEl.value = "";
+}
+
+function syncTwoBulletsCreateUi(options = {}) {
+  const { clearValues = false } = options;
+  const enabled = Boolean(twoBulletsToggleEl?.checked);
+  if (twoBulletsCreatePanelEl) {
+    twoBulletsCreatePanelEl.hidden = !enabled;
+  }
+  if (!enabled && clearValues) {
+    clearTwoBulletsCreateValues();
+  }
+  updateTwoBulletsCreateDerivedFields();
+}
+
+function syncTwoBulletsEditUi(options = {}) {
+  const { clearValues = false } = options;
+  const enabled = Boolean(editTwoBulletsToggleEl?.checked);
+  if (twoBulletsEditPanelEl) {
+    twoBulletsEditPanelEl.hidden = !enabled;
+  }
+  if (editOutcomeEl) {
+    editOutcomeEl.disabled = enabled;
+    if (enabled) {
+      editOutcomeEl.value = "";
+    }
+  }
+  if (editPnlEl) {
+    editPnlEl.disabled = enabled;
+    if (enabled) {
+      editPnlEl.value = "";
+    }
+  }
+  if (!enabled && clearValues) {
+    clearTwoBulletsEditValues();
+  }
+  updateTwoBulletsEditDerivedFields();
+}
+
 function syncEntryFlowState(options = {}) {
   const { forceChecklistRerender = false } = options;
+  const isTwoBullets = Boolean(twoBulletsToggleEl?.checked);
   const outcomeSelected = Boolean(String(outcomeEl?.value || "").trim());
   const strategySelected = Boolean(String(strategyEl?.value || "").trim());
 
+  if (outcomeEl) {
+    outcomeEl.disabled = isTwoBullets;
+    if (isTwoBullets) {
+      outcomeEl.value = "";
+    }
+  }
+
   if (entryPnlFieldEl && pnlEl) {
-    pnlEl.disabled = !outcomeSelected;
+    pnlEl.disabled = isTwoBullets || !outcomeSelected;
     entryPnlFieldEl.classList.toggle("is-secondary", !outcomeSelected);
     entryPnlFieldEl.classList.toggle("is-ready", outcomeSelected);
-    if (!outcomeSelected) {
+    if (isTwoBullets) {
+      if (String(pnlEl.value || "").trim()) {
+        pnlEl.value = "";
+      }
+      pnlEl.placeholder = "Auto from B1 + B2";
+    } else if (!outcomeSelected) {
       if (String(pnlEl.value || "").trim()) {
         pnlEl.value = "";
       }
@@ -4171,19 +4531,78 @@ async function handleCreateSubmit(event) {
       return;
     }
 
+    const isTwoBullets = Boolean(twoBulletsToggleEl?.checked);
     const pnl = parsePnl(pnlEl.value);
     const pnlError = validatePnlInput(pnlEl.value);
-    if (pnlError) {
+    if (!isTwoBullets && pnlError) {
       failInline(pnlError);
       return;
     }
 
-    if (pnl != null && !outcomeEl.value) {
-      failInline("Select outcome when PnL is entered.");
-      return;
+    let twoBulletsPayload = null;
+    let finalOutcome = String(outcomeEl.value || "");
+    let finalPnl = Number.isFinite(pnl) ? pnl : null;
+    let finalStatus = finalOutcome ? "closed" : "open";
+
+    if (isTwoBullets) {
+      const b1Outcome = normalizeB1Outcome(b1OutcomeEl?.value);
+      const b2Outcome = normalizeB2Outcome(b2OutcomeEl?.value);
+      const b1Pnl = parsePnl(b1PnlEl?.value || "");
+      const b2Pnl = parsePnl(b2PnlEl?.value || "");
+      const b1PnlError = validatePnlInput(b1PnlEl?.value || "");
+      const b2PnlError = validatePnlInput(b2PnlEl?.value || "");
+
+      if (b1PnlError || b2PnlError) {
+        failInline("B1/B2 PnL must be numeric.");
+        return;
+      }
+      if (b1Outcome !== "Open" && !Number.isFinite(b1Pnl)) {
+        failInline("B1 PnL is required when B1 outcome is closed.");
+        return;
+      }
+      if (b2Outcome !== "Open" && !Number.isFinite(b2Pnl)) {
+        failInline("B2 PnL is required when B2 outcome is closed.");
+        return;
+      }
+
+      const derived = computeTwoBulletsDerived({
+        b1: {
+          outcome: b1Outcome,
+          pnl: b1Pnl,
+          risk_amount: Number.isFinite(b1Pnl) ? Math.abs(b1Pnl) : null,
+        },
+        b2: {
+          outcome: b2Outcome,
+          pnl: b2Pnl,
+          target_rr: normalizeB2TargetRr(b2TargetRrEl?.value),
+        },
+      });
+
+      twoBulletsPayload = {
+        b1: {
+          outcome: derived.b1Outcome,
+          pnl: Number.isFinite(derived.b1Pnl) ? derived.b1Pnl : null,
+          risk_amount: Number.isFinite(derived.baseRisk) ? derived.baseRisk : null,
+        },
+        b2: {
+          outcome: derived.b2Outcome,
+          pnl: Number.isFinite(derived.b2Pnl) ? derived.b2Pnl : null,
+          target_rr: normalizeB2TargetRr(b2TargetRrEl?.value),
+        },
+      };
+      finalStatus = derived.status;
+      finalOutcome = derived.outcome;
+      finalPnl = Number.isFinite(derived.totalPnl) ? derived.totalPnl : null;
+    } else {
+      if (pnl != null && !outcomeEl.value) {
+        failInline("Select outcome when PnL is entered.");
+        return;
+      }
     }
 
-    const isClosingTrade = Boolean(outcomeEl.value) || pnl != null;
+    const isClosingTrade = isTwoBullets
+      ? normalizeB1Outcome(b1OutcomeEl?.value) !== "Open" || normalizeB2Outcome(b2OutcomeEl?.value) !== "Open"
+      : Boolean(outcomeEl.value) || pnl != null;
     if (isClosingTrade && !createImages.afterBlob) {
       failInline("After screenshot is required when closing a trade.");
       return;
@@ -4215,7 +4634,6 @@ async function handleCreateSubmit(event) {
     const afterImageId = createImages.afterBlob ? await saveImageRecord(createImages.afterBlob) : null;
 
     const nowIso = new Date().toISOString();
-    const status = outcomeEl.value ? "closed" : "open";
 
     const trade = normalizeTrade({
       id: crypto.randomUUID(),
@@ -4246,14 +4664,17 @@ async function handleCreateSubmit(event) {
       missing_quality: inferred.missing_quality,
       raw_score_present: inferred.raw_score_present,
       raw_score_total: inferred.raw_score_total,
-      outcome: outcomeEl.value,
-      pnl: Number.isFinite(pnl) ? pnl : null,
+      outcome: finalOutcome,
+      pnl: finalPnl,
+      two_bullets: isTwoBullets,
+      b1: twoBulletsPayload?.b1 || null,
+      b2: twoBulletsPayload?.b2 || null,
       note: noteEl.value.trim(),
       captured_at_utc: capturedAt.toISOString(),
       captured_at_local: formatDateTime(capturedAt.toISOString()),
       timezone_offset_min: capturedAt.getTimezoneOffset(),
-      status,
-      closed_at_utc: status === "closed" ? nowIso : null,
+      status: finalStatus,
+      closed_at_utc: finalStatus === "closed" ? nowIso : null,
       edit_count: 0,
       before_image_id: beforeImageId,
       after_image_id: afterImageId,
@@ -4504,8 +4925,11 @@ function createCardGroup(rows, urlMap, missingImageIds = []) {
     const afterMissing = trade.after_image_id && !afterUrl;
 
     const setupClass = integrityClass(trade.setup_integrity);
-    const outcomeClass = badgeClassForOutcome(trade.outcome);
+    const outcomeText = getTradeOutcomeLabel(trade);
+    const outcomeClass = badgeClassForOutcome(outcomeText);
     const pnlClass = Number.isFinite(trade.pnl) ? (trade.pnl >= 0 ? "pnl-pos" : "pnl-neg") : "muted-empty";
+    const twoBulletsBadge = isTwoBulletsTrade(trade) ? '<span class="badge b-info">2B</span>' : "";
+    const statusLabel = getTradeStatusLabel(trade);
 
     const beforeImg = beforeUrl
       ? `<img class="trade-img" src="${beforeUrl}" alt="Before screenshot" />`
@@ -4532,14 +4956,14 @@ function createCardGroup(rows, urlMap, missingImageIds = []) {
       </div>
       <div class="trade-caption">
         <div class="cap-top">
-          <div class="cap-pair">${escapeHtml(trade.pair)} · ${escapeHtml(trade.direction)}</div>
+          <div class="cap-pair">${escapeHtml(trade.pair)} ${twoBulletsBadge} · ${escapeHtml(trade.direction)}</div>
           <div class="cap-time">${formatDateTime(trade.captured_at_utc)}</div>
         </div>
         <div class="cap-meta">
-          ${trade.status === "open" ? '<span class="open-chip">Open</span>' : ""}
+          ${trade.status === "open" ? `<span class="open-chip">${escapeHtml(statusLabel)}</span>` : ""}
           ${syncIndicator}
           <span class="badge ${setupClass}">${escapeHtml(trade.state_tag || integrityLabel(trade.model_adherence || "Bad"))}</span>
-          <span class="badge ${outcomeClass}">${escapeHtml(trade.outcome || "Open")}</span>
+          <span class="badge ${outcomeClass}">${escapeHtml(outcomeText)}</span>
           <span class="badge b-info">${escapeHtml(trade.strategy || "-")}</span>
           <span class="badge b-info">${escapeHtml((trade.sessions || []).join(" / "))}</span>
           <span class="badge b-info">Grade ${escapeHtml(trade.setup_grade || "-")}</span>
@@ -4558,7 +4982,69 @@ function createCardGroup(rows, urlMap, missingImageIds = []) {
   return grid;
 }
 
+function getTradeStatusLabel(trade) {
+  if (isTwoBulletsTrade(trade)) {
+    const derived = computeTwoBulletsDerived({ b1: trade.b1, b2: trade.b2 });
+    if (derived.isPartial) {
+      return "Partial — B2 running";
+    }
+  }
+  return trade.status === "open" ? "Open" : "Closed";
+}
+
+function getTradeOutcomeLabel(trade) {
+  if (isTwoBulletsTrade(trade)) {
+    const derived = computeTwoBulletsDerived({ b1: trade.b1, b2: trade.b2 });
+    if (derived.isPartial) {
+      return "Partial — B2 running";
+    }
+    if (trade.status === "open") {
+      return "Open";
+    }
+    return derived.outcome || "Closed";
+  }
+  return trade.outcome || (trade.status === "open" ? "Open" : "Closed");
+}
+
+function renderTwoBulletsDetailHtml(trade) {
+  if (!isTwoBulletsTrade(trade)) {
+    return "";
+  }
+  const derived = computeTwoBulletsDerived({ b1: trade.b1, b2: trade.b2 });
+  const b1PnlText = Number.isFinite(derived.b1Pnl) ? formatMoney(derived.b1Pnl) : "-";
+  const b2PnlText = Number.isFinite(derived.b2Pnl) ? formatMoney(derived.b2Pnl) : "-";
+  return `
+    <div class="detail-two-bullets">
+      <div class="detail-two-bullets-row"><span class="detail-label">B1</span><strong>${escapeHtml(derived.b1Outcome)} · ${escapeHtml(b1PnlText)}</strong></div>
+      <div class="detail-two-bullets-row"><span class="detail-label">B2</span><strong>${escapeHtml(derived.b2Outcome)} · ${escapeHtml(b2PnlText)}</strong></div>
+      <div class="detail-two-bullets-row"><span class="detail-label">Effective R:R</span><strong>${escapeHtml(derived.effectiveRrLabel)}</strong></div>
+    </div>
+  `;
+}
+
 function shortOutcomeLabel(trade) {
+  if (isTwoBulletsTrade(trade)) {
+    const derived = computeTwoBulletsDerived({ b1: trade.b1, b2: trade.b2 });
+    if (derived.isPartial) {
+      return "Partial — B2 running";
+    }
+    if (trade.status === "open") {
+      return "Open";
+    }
+    if (derived.outcome === "Full Win") {
+      return "Win";
+    }
+    if (derived.outcome === "Breakeven") {
+      return "BE";
+    }
+    if (derived.outcome === "Partial + BE") {
+      return "P+BE";
+    }
+    if (derived.outcome === "Full Loss") {
+      return "Loss";
+    }
+    return "Closed";
+  }
   if (trade.status === "open") {
     return "Open";
   }
@@ -4583,13 +5069,14 @@ function createTradeRow(trade) {
   const grade = trade.setup_grade || "-";
   const strategy = trade.strategy || "-";
   const glanceText = `${outcome} · Grade ${grade} · ${strategy}`;
+  const twoBulletsBadge = isTwoBulletsTrade(trade) ? '<span class="badge b-info tr-2b">2B</span>' : "";
 
   row.className = `trade-row${trade.status === "open" ? " open-trade" : ""}`;
   row.dataset.viewId = trade.id;
   row.setAttribute("role", "button");
   row.tabIndex = 0;
   row.innerHTML = `
-    <div class="tr-pair">${escapeHtml(trade.pair)} <span class="tr-dir">${escapeHtml(trade.direction)}</span></div>
+    <div class="tr-pair">${escapeHtml(trade.pair)} ${twoBulletsBadge} <span class="tr-dir">${escapeHtml(trade.direction)}</span></div>
     <div class="tr-glance" title="${escapeHtmlAttr((trade.state_tag || "") + " | " + formatDateTime(trade.captured_at_utc))}">${escapeHtml(glanceText)}</div>
     <div class="tr-pnl ${pnlClass}">${escapeHtml(formatMoney(trade.pnl))}</div>
   `;
@@ -4603,6 +5090,56 @@ function createInlineEditorRow(trade) {
 
   const date = toDateInputValue(trade.captured_at_utc || new Date());
   const time = toTimeInputValue(trade.captured_at_utc || new Date());
+  const twoBullets = isTwoBulletsTrade(trade);
+  const b1Outcome = normalizeB1Outcome(trade.b1?.outcome);
+  const b2Outcome = normalizeB2Outcome(trade.b2?.outcome);
+
+  const inlineOutcomeFields = twoBullets
+    ? `
+      <label class="field">Close target
+        <select class="inline-close-bullet">
+          <option value="">Closing B1 or B2?</option>
+          <option value="b1">B1</option>
+          <option value="b2">B2</option>
+        </select>
+      </label>
+      <label class="field">B1 Outcome
+        <select class="inline-b1-outcome">
+          <option value="Open" ${b1Outcome === "Open" ? "selected" : ""}>Open</option>
+          <option value="Win" ${b1Outcome === "Win" ? "selected" : ""}>Win</option>
+          <option value="Loss" ${b1Outcome === "Loss" ? "selected" : ""}>Loss</option>
+        </select>
+      </label>
+      <label class="field">B1 PnL ($)
+        <input class="inline-b1-pnl" type="text" value="${Number.isFinite(trade.b1?.pnl) ? escapeHtmlAttr(String(trade.b1.pnl)) : ""}" />
+      </label>
+      <label class="field">B2 Outcome
+        <select class="inline-b2-outcome">
+          <option value="Open" ${b2Outcome === "Open" ? "selected" : ""}>Open</option>
+          <option value="Win" ${b2Outcome === "Win" ? "selected" : ""}>Win</option>
+          <option value="Breakeven" ${b2Outcome === "Breakeven" ? "selected" : ""}>Breakeven</option>
+          <option value="Loss" ${b2Outcome === "Loss" ? "selected" : ""}>Loss</option>
+        </select>
+      </label>
+      <label class="field">B2 PnL ($)
+        <input class="inline-b2-pnl" type="text" value="${Number.isFinite(trade.b2?.pnl) ? escapeHtmlAttr(String(trade.b2.pnl)) : ""}" />
+      </label>
+      <label class="field">B2 Target R:R
+        <input class="inline-b2-target-rr" type="number" min="1" step="0.1" value="${Number.isFinite(trade.b2?.target_rr) ? escapeHtmlAttr(String(trade.b2.target_rr)) : ""}" />
+      </label>
+    `
+    : `
+      <label class="field">Outcome
+        <select class="inline-outcome">
+          <option value="">Open - fill later</option>
+          ${OUTCOMES.map((outcome) => `<option value="${outcome}" ${trade.outcome === outcome ? "selected" : ""}>${outcome}</option>`).join("")}
+        </select>
+      </label>
+
+      <label class="field">PnL ($)
+        <input class="inline-pnl" type="text" value="${Number.isFinite(trade.pnl) ? escapeHtmlAttr(String(trade.pnl)) : ""}" />
+      </label>
+    `;
 
   row.innerHTML = `
     <div class="inline-grid">
@@ -4630,16 +5167,7 @@ function createInlineEditorRow(trade) {
         </div>
       </div>
 
-      <label class="field">Outcome
-        <select class="inline-outcome">
-          <option value="">Open - fill later</option>
-          ${OUTCOMES.map((outcome) => `<option value="${outcome}" ${trade.outcome === outcome ? "selected" : ""}>${outcome}</option>`).join("")}
-        </select>
-      </label>
-
-      <label class="field">PnL ($)
-        <input class="inline-pnl" type="text" value="${Number.isFinite(trade.pnl) ? escapeHtmlAttr(String(trade.pnl)) : ""}" />
-      </label>
+      ${inlineOutcomeFields}
 
       <label class="field">Note
         <input class="inline-note" type="text" maxlength="240" value="${escapeHtmlAttr(trade.note || "")}" />
@@ -4782,23 +5310,98 @@ async function handleInlineSubmit(formEl, existingTrade) {
   const strategy = formEl.querySelector(".inline-strategy")?.value || "";
   const sessions = getCheckedValues(formEl, "inlineSession");
   const presentConfluences = getCheckedValues(formEl, "inlineConfluence");
-  const outcome = formEl.querySelector(".inline-outcome")?.value || "";
   const note = (formEl.querySelector(".inline-note")?.value || "").trim();
+  const isTwoBullets = isTwoBulletsTrade(existingTrade);
+  const outcome = formEl.querySelector(".inline-outcome")?.value || "";
   const pnl = parsePnl(formEl.querySelector(".inline-pnl")?.value || "");
+
+  let finalOutcome = outcome;
+  let finalPnl = Number.isFinite(pnl) ? pnl : null;
+  let finalStatus = finalOutcome ? "closed" : "open";
+  let b1Patch = existingTrade.b1 || null;
+  let b2Patch = existingTrade.b2 || null;
 
   if (!pair || !direction || !strategy || sessions.length === 0) {
     showToast("Inline edit: missing required fields", "bad");
     return;
   }
 
-  if ((formEl.querySelector(".inline-pnl")?.value || "").trim() && !Number.isFinite(pnl)) {
-    showToast("Inline edit: invalid PnL", "bad");
-    return;
-  }
+  if (!isTwoBullets) {
+    if ((formEl.querySelector(".inline-pnl")?.value || "").trim() && !Number.isFinite(pnl)) {
+      showToast("Inline edit: invalid PnL", "bad");
+      return;
+    }
 
-  if (pnl != null && !outcome) {
-    showToast("Inline edit: outcome required with PnL", "bad");
-    return;
+    if (pnl != null && !outcome) {
+      showToast("Inline edit: outcome required with PnL", "bad");
+      return;
+    }
+  } else {
+    const b1Outcome = normalizeB1Outcome(formEl.querySelector(".inline-b1-outcome")?.value);
+    const b2Outcome = normalizeB2Outcome(formEl.querySelector(".inline-b2-outcome")?.value);
+    const b1PnlInput = formEl.querySelector(".inline-b1-pnl")?.value || "";
+    const b2PnlInput = formEl.querySelector(".inline-b2-pnl")?.value || "";
+    const b1Pnl = parsePnl(b1PnlInput);
+    const b2Pnl = parsePnl(b2PnlInput);
+
+    if (validatePnlInput(b1PnlInput) || validatePnlInput(b2PnlInput)) {
+      showToast("Inline edit: invalid B1/B2 PnL", "bad");
+      return;
+    }
+    if (b1Outcome !== "Open" && !Number.isFinite(b1Pnl)) {
+      showToast("Inline edit: B1 PnL required", "bad");
+      return;
+    }
+    if (b2Outcome !== "Open" && !Number.isFinite(b2Pnl)) {
+      showToast("Inline edit: B2 PnL required", "bad");
+      return;
+    }
+
+    const previousB1 = normalizeB1Outcome(existingTrade.b1?.outcome);
+    const previousB2 = normalizeB2Outcome(existingTrade.b2?.outcome);
+    const b1JustClosed = previousB1 === "Open" && b1Outcome !== "Open";
+    const b2JustClosed = previousB2 === "Open" && b2Outcome !== "Open";
+    if ((b1JustClosed || b2JustClosed) && !(b1JustClosed && b2JustClosed)) {
+      let closeTarget = formEl.querySelector(".inline-close-bullet")?.value || "";
+      if (!closeTarget) {
+        closeTarget = String(window.prompt("Closing B1 or B2?", b1JustClosed ? "B1" : "B2") || "").toLowerCase();
+      }
+      if (!closeTarget) {
+        showToast("Inline edit: choose B1 or B2 for quick close", "bad");
+        return;
+      }
+      if (closeTarget !== "b1" && closeTarget !== "b2") {
+        showToast("Inline edit: close target must be B1 or B2", "bad");
+        return;
+      }
+    }
+
+    const derived = computeTwoBulletsDerived({
+      b1: {
+        outcome: b1Outcome,
+        pnl: b1Pnl,
+        risk_amount: Number.isFinite(b1Pnl) ? Math.abs(b1Pnl) : existingTrade.b1?.risk_amount,
+      },
+      b2: {
+        outcome: b2Outcome,
+        pnl: b2Pnl,
+        target_rr: normalizeB2TargetRr(formEl.querySelector(".inline-b2-target-rr")?.value),
+      },
+    });
+
+    finalOutcome = derived.outcome;
+    finalPnl = Number.isFinite(derived.totalPnl) ? derived.totalPnl : null;
+    finalStatus = derived.status;
+    b1Patch = {
+      outcome: derived.b1Outcome,
+      pnl: Number.isFinite(derived.b1Pnl) ? derived.b1Pnl : null,
+      risk_amount: Number.isFinite(derived.baseRisk) ? derived.baseRisk : null,
+    };
+    b2Patch = {
+      outcome: derived.b2Outcome,
+      pnl: Number.isFinite(derived.b2Pnl) ? derived.b2Pnl : null,
+      target_rr: normalizeB2TargetRr(formEl.querySelector(".inline-b2-target-rr")?.value),
+    };
   }
 
   if (!presentConfluences.length) {
@@ -4844,7 +5447,9 @@ async function handleInlineSubmit(formEl, existingTrade) {
     return;
   }
 
-  const isClosingTrade = Boolean(outcome) || pnl != null;
+  const isClosingTrade = isTwoBullets
+    ? normalizeB1Outcome(b1Patch?.outcome) !== "Open" || normalizeB2Outcome(b2Patch?.outcome) !== "Open"
+    : Boolean(finalOutcome) || finalPnl != null;
   const finalAfterPresent = Boolean(finalAfter || afterBlob);
   if (isClosingTrade && !finalAfterPresent) {
     showToast("Inline edit: after screenshot required when closing", "bad");
@@ -4859,8 +5464,12 @@ async function handleInlineSubmit(formEl, existingTrade) {
     strategy,
     smc_entry_types: existingTrade.smc_entry_types || [],
     present_confluences: presentConfluences,
-    outcome,
-    pnl: Number.isFinite(pnl) ? pnl : null,
+    outcome: finalOutcome,
+    pnl: finalPnl,
+    status: finalStatus,
+    two_bullets: isTwoBullets,
+    b1: isTwoBullets ? b1Patch : null,
+    b2: isTwoBullets ? b2Patch : null,
     note,
     captured_at_utc: capturedAtUtc,
     timezone_offset_min: new Date(capturedAtUtc).getTimezoneOffset(),
@@ -4979,6 +5588,12 @@ async function openTradeDetailModal(id) {
     return;
   }
 
+  const twoBullets = isTwoBulletsTrade(trade);
+  const twoBulletsDerived = computeTwoBulletsDerived({ b1: trade.b1, b2: trade.b2 });
+  const statusLabel = getTradeStatusLabel(trade);
+  const outcomeLabel = getTradeOutcomeLabel(trade);
+  const twoBulletsDetailHtml = renderTwoBulletsDetailHtml(trade);
+
   activeDetailTradeId = id;
   releaseDetailModalUrls();
 
@@ -5017,15 +5632,16 @@ async function openTradeDetailModal(id) {
     <div class="detail-meta-grid">
       <div><span class="detail-label">Pair</span><strong>${escapeHtml(trade.pair)} ${escapeHtml(trade.direction)}</strong></div>
       <div><span class="detail-label">Captured</span><strong>${escapeHtml(formatDateTime(trade.captured_at_utc))}</strong></div>
-      <div><span class="detail-label">Status</span><strong>${escapeHtml(trade.status === "open" ? "Open" : "Closed")}</strong></div>
+      <div><span class="detail-label">Status</span><strong>${escapeHtml(statusLabel)}</strong></div>
       <div><span class="detail-label">Strategy</span><strong>${escapeHtml(trade.strategy || "-")}</strong></div>
       <div><span class="detail-label">Sessions</span><strong>${escapeHtml((trade.sessions || []).join(" / ") || "-")}</strong></div>
       <div><span class="detail-label">Lot / PnL</span><strong>${escapeHtml(Number(trade.lot_size || 0).toFixed(3))} / ${escapeHtml(formatMoney(trade.pnl))}</strong></div>
       <div><span class="detail-label">Grade</span><strong>${escapeHtml(trade.setup_grade || "-")}</strong></div>
       <div><span class="detail-label">Adherence</span><strong>${escapeHtml(trade.model_adherence || "Bad")}</strong></div>
       <div><span class="detail-label">State</span><strong>${escapeHtml(trade.state_tag || "-")}</strong></div>
-      <div><span class="detail-label">Outcome</span><strong>${escapeHtml(trade.outcome || "Open")}</strong></div>
+      <div><span class="detail-label">Outcome</span><strong>${escapeHtml(outcomeLabel)}</strong></div>
     </div>
+    ${twoBulletsDetailHtml}
     <div class="detail-note-block">
       <span class="detail-label">Note</span>
       <p>${escapeHtml(trade.note || "No note")}</p>
@@ -5048,6 +5664,35 @@ async function openTradeDetailModal(id) {
     <div class="detail-close-panel">
       <div class="detail-close-title">Close This Trade</div>
       <div class="detail-close-grid">
+        ${twoBullets ? `
+        <label class="field">B1 Outcome
+          <select id="detailCloseB1Outcome">
+            <option value="Open" ${twoBulletsDerived.b1Outcome === "Open" ? "selected" : ""}>Open</option>
+            <option value="Win" ${twoBulletsDerived.b1Outcome === "Win" ? "selected" : ""}>Win</option>
+            <option value="Loss" ${twoBulletsDerived.b1Outcome === "Loss" ? "selected" : ""}>Loss</option>
+          </select>
+        </label>
+        <label class="field">B1 PnL
+          <input id="detailCloseB1Pnl" type="text" value="${Number.isFinite(twoBulletsDerived.b1Pnl) ? escapeHtmlAttr(String(twoBulletsDerived.b1Pnl)) : ""}" placeholder="+1.00 or -1.00" />
+        </label>
+        <label class="field">B2 Outcome
+          <select id="detailCloseB2Outcome">
+            <option value="Open" ${twoBulletsDerived.b2Outcome === "Open" ? "selected" : ""}>Open</option>
+            <option value="Win" ${twoBulletsDerived.b2Outcome === "Win" ? "selected" : ""}>Win</option>
+            <option value="Breakeven" ${twoBulletsDerived.b2Outcome === "Breakeven" ? "selected" : ""}>Breakeven</option>
+            <option value="Loss" ${twoBulletsDerived.b2Outcome === "Loss" ? "selected" : ""}>Loss</option>
+          </select>
+        </label>
+        <label class="field">B2 PnL
+          <input id="detailCloseB2Pnl" type="text" value="${Number.isFinite(twoBulletsDerived.b2Pnl) ? escapeHtmlAttr(String(twoBulletsDerived.b2Pnl)) : ""}" placeholder="+3.00 or 0" />
+        </label>
+        <label class="field">B2 Target R:R
+          <input id="detailCloseB2TargetRr" type="number" min="1" step="0.1" value="${Number.isFinite(trade.b2?.target_rr) ? escapeHtmlAttr(String(trade.b2.target_rr)) : ""}" />
+        </label>
+        <label class="field">Effective R:R
+          <input id="detailCloseEffectiveRr" type="text" value="${escapeHtmlAttr(twoBulletsDerived.effectiveRrLabel)}" readonly />
+        </label>
+        ` : `
         <label class="field">Outcome
           <select id="detailCloseOutcome">
             <option value="">Select outcome</option>
@@ -5060,6 +5705,7 @@ async function openTradeDetailModal(id) {
         <label class="field">PnL
           <input id="detailClosePnl" type="text" placeholder="+3.50 or -1.20" />
         </label>
+        `}
         <label class="field">After Screenshot (required)
           <input id="detailCloseAfterFile" type="file" accept="image/*" />
         </label>
@@ -5147,6 +5793,25 @@ async function openEditModal(id) {
   }
   editOutcomeEl.value = trade.outcome || "";
   editPnlEl.value = Number.isFinite(trade.pnl) ? String(trade.pnl) : "";
+  if (editTwoBulletsToggleEl) {
+    editTwoBulletsToggleEl.checked = Boolean(trade.two_bullets);
+  }
+  if (editB1OutcomeEl) {
+    editB1OutcomeEl.value = normalizeB1Outcome(trade.b1?.outcome);
+  }
+  if (editB2OutcomeEl) {
+    editB2OutcomeEl.value = normalizeB2Outcome(trade.b2?.outcome);
+  }
+  if (editB1PnlEl) {
+    editB1PnlEl.value = Number.isFinite(trade.b1?.pnl) ? String(trade.b1.pnl) : "";
+  }
+  if (editB2PnlEl) {
+    editB2PnlEl.value = Number.isFinite(trade.b2?.pnl) ? String(trade.b2.pnl) : "";
+  }
+  if (editB2TargetRrEl) {
+    editB2TargetRrEl.value = Number.isFinite(trade.b2?.target_rr) ? String(trade.b2.target_rr) : "";
+  }
+  syncTwoBulletsEditUi();
   editNoteEl.value = trade.note || "";
 
   editManualTimeEnabled = false;
@@ -5222,14 +5887,70 @@ async function handleEditSubmit(event) {
     return;
   }
 
+  const isTwoBullets = Boolean(editTwoBulletsToggleEl?.checked);
   const pnl = parsePnl(editPnlEl.value);
-  if (editPnlEl.value.trim() && !Number.isFinite(pnl)) {
+  if (!isTwoBullets && editPnlEl.value.trim() && !Number.isFinite(pnl)) {
     editErrorEl.textContent = "PnL must be numeric.";
     showToast("Invalid PnL", "bad");
     return;
   }
 
-  if (pnl != null && !editOutcomeEl.value) {
+  let twoBulletsPayload = null;
+  let finalOutcome = String(editOutcomeEl.value || "");
+  let finalPnl = Number.isFinite(pnl) ? pnl : null;
+  let finalStatus = finalOutcome ? "closed" : "open";
+
+  if (isTwoBullets) {
+    const b1Outcome = normalizeB1Outcome(editB1OutcomeEl?.value);
+    const b2Outcome = normalizeB2Outcome(editB2OutcomeEl?.value);
+    const b1Pnl = parsePnl(editB1PnlEl?.value || "");
+    const b2Pnl = parsePnl(editB2PnlEl?.value || "");
+
+    if (validatePnlInput(editB1PnlEl?.value || "") || validatePnlInput(editB2PnlEl?.value || "")) {
+      editErrorEl.textContent = "B1/B2 PnL must be numeric.";
+      showToast("Invalid B1/B2 PnL", "bad");
+      return;
+    }
+    if (b1Outcome !== "Open" && !Number.isFinite(b1Pnl)) {
+      editErrorEl.textContent = "B1 PnL is required when B1 is closed.";
+      showToast("Missing B1 PnL", "bad");
+      return;
+    }
+    if (b2Outcome !== "Open" && !Number.isFinite(b2Pnl)) {
+      editErrorEl.textContent = "B2 PnL is required when B2 is closed.";
+      showToast("Missing B2 PnL", "bad");
+      return;
+    }
+
+    const derived = computeTwoBulletsDerived({
+      b1: {
+        outcome: b1Outcome,
+        pnl: b1Pnl,
+        risk_amount: Number.isFinite(b1Pnl) ? Math.abs(b1Pnl) : null,
+      },
+      b2: {
+        outcome: b2Outcome,
+        pnl: b2Pnl,
+        target_rr: normalizeB2TargetRr(editB2TargetRrEl?.value),
+      },
+    });
+
+    twoBulletsPayload = {
+      b1: {
+        outcome: derived.b1Outcome,
+        pnl: Number.isFinite(derived.b1Pnl) ? derived.b1Pnl : null,
+        risk_amount: Number.isFinite(derived.baseRisk) ? derived.baseRisk : null,
+      },
+      b2: {
+        outcome: derived.b2Outcome,
+        pnl: Number.isFinite(derived.b2Pnl) ? derived.b2Pnl : null,
+        target_rr: normalizeB2TargetRr(editB2TargetRrEl?.value),
+      },
+    };
+    finalOutcome = derived.outcome;
+    finalPnl = Number.isFinite(derived.totalPnl) ? derived.totalPnl : null;
+    finalStatus = derived.status;
+  } else if (pnl != null && !editOutcomeEl.value) {
     editErrorEl.textContent = "Select outcome when PnL is entered.";
     showToast("Outcome is required with PnL", "bad");
     return;
@@ -5266,7 +5987,9 @@ async function handleEditSubmit(event) {
     return;
   }
 
-  const isClosingTrade = Boolean(editOutcomeEl.value) || pnl != null;
+  const isClosingTrade = isTwoBullets
+    ? normalizeB1Outcome(editB1OutcomeEl?.value) !== "Open" || normalizeB2Outcome(editB2OutcomeEl?.value) !== "Open"
+    : Boolean(editOutcomeEl.value) || pnl != null;
   if (isClosingTrade && !afterStillPresent) {
     editErrorEl.textContent = "After screenshot is required when closing a trade.";
     showToast("After screenshot required", "bad");
@@ -5281,8 +6004,12 @@ async function handleEditSubmit(event) {
     strategy: editStrategyEl.value,
     smc_entry_types: editStrategyEl.value === "SMC" ? getCheckedValues(editForm, "editSmcEntryType") : [],
     present_confluences: presentConfluences,
-    outcome: editOutcomeEl.value,
-    pnl: Number.isFinite(pnl) ? pnl : null,
+    outcome: finalOutcome,
+    pnl: finalPnl,
+    status: finalStatus,
+    two_bullets: isTwoBullets,
+    b1: twoBulletsPayload?.b1 || null,
+    b2: twoBulletsPayload?.b2 || null,
     note: editNoteEl.value.trim(),
     captured_at_utc: capturedAtUtc,
     timezone_offset_min: new Date(capturedAtUtc).getTimezoneOffset(),
@@ -5309,7 +6036,33 @@ async function updateTrade(id, patch) {
   const afterResult = await applyImagePatch(current.after_image_id, patch.imagePatch?.after);
 
   const inferred = inferConfluence(patch.strategy, patch.present_confluences || []);
-  const status = patch.outcome ? "closed" : "open";
+  let status = patch.outcome ? "closed" : "open";
+  let outcome = patch.outcome;
+  let pnl = patch.pnl;
+  let twoBulletsFlag = Boolean(patch.two_bullets ?? current.two_bullets);
+  let b1Value = patch.b1 ?? current.b1 ?? null;
+  let b2Value = patch.b2 ?? current.b2 ?? null;
+
+  if (twoBulletsFlag) {
+    const derived = computeTwoBulletsDerived({ b1: b1Value, b2: b2Value });
+    status = derived.status;
+    outcome = derived.outcome;
+    pnl = Number.isFinite(derived.totalPnl) ? derived.totalPnl : null;
+    b1Value = {
+      outcome: derived.b1Outcome,
+      pnl: Number.isFinite(derived.b1Pnl) ? derived.b1Pnl : null,
+      risk_amount: Number.isFinite(derived.baseRisk) ? derived.baseRisk : null,
+    };
+    b2Value = {
+      outcome: derived.b2Outcome,
+      pnl: Number.isFinite(derived.b2Pnl) ? derived.b2Pnl : null,
+      target_rr: normalizeB2TargetRr((patch.b2 && patch.b2.target_rr) ?? current.b2?.target_rr),
+    };
+  }
+
+  if (patch.status === "open" || patch.status === "closed") {
+    status = patch.status;
+  }
 
   let closedAtUtc = current.closed_at_utc || null;
   if (status === "closed" && !closedAtUtc) {
@@ -5348,8 +6101,11 @@ async function updateTrade(id, patch) {
     missing_quality: inferred.missing_quality,
     raw_score_present: inferred.raw_score_present,
     raw_score_total: inferred.raw_score_total,
-    outcome: patch.outcome,
-    pnl: patch.pnl,
+    outcome,
+    pnl,
+    two_bullets: twoBulletsFlag,
+    b1: twoBulletsFlag ? b1Value : null,
+    b2: twoBulletsFlag ? b2Value : null,
     note: patch.note,
     captured_at_utc: patch.captured_at_utc,
     captured_at_local: formatDateTime(patch.captured_at_utc),
@@ -5490,12 +6246,18 @@ async function deleteTrade(id) {
 
 function badgeClassForOutcome(outcome) {
   switch (outcome) {
+    case "Win":
     case "Full Win":
       return "b-ok";
+    case "Loss":
     case "Full Loss":
       return "b-bad";
+    case "Partial — B2 running":
+    case "Open":
+      return "b-warn";
     case "Partial + BE":
     case "Breakeven":
+    case "BE":
       return "b-info";
     default:
       return "b-warn";
@@ -5582,6 +6344,19 @@ function renderTopInsightReel(rows) {
 function renderAnalytics(rows) {
   const analytics = getAnalyticsCached(rows);
   const keys = TAB_INSIGHTS[activeAnalyticsTab] || [];
+  const twoBulletsStats = analytics.twoBulletsStats || {
+    totalTrades: 0,
+    completedTrades: 0,
+    partialTrades: 0,
+    b1HitCount: 0,
+    b1HitRate: 0,
+    b2QualifiedCount: 0,
+    b2WinCount: 0,
+    b2WinRate: 0,
+    avgEffectiveR: 0,
+    runnerAlphaTotal: 0,
+    runnerAlphaAvg: 0,
+  };
 
   const cards = keys
     .map((key) => {
@@ -5595,8 +6370,43 @@ function renderAnalytics(rows) {
     })
     .join("");
 
+  const showTwoBulletsSection = activeAnalyticsTab === "performance";
+
   analyticsPanelEl.innerHTML = `
     <div class="stats-grid">${cards}</div>
+    ${showTwoBulletsSection ? `
+    <section class="two-bullets-analytics">
+      <div class="section-head section-head-tight">
+        <h3>Two Bullets Performance</h3>
+      </div>
+      <div class="two-bullets-analytics-grid">
+        <article class="stat">
+          <div class="label">Total 2B Trades</div>
+          <div class="value">${escapeHtml(String(twoBulletsStats.totalTrades))}</div>
+          <div class="micro-hint">Completed: ${escapeHtml(String(twoBulletsStats.completedTrades))} · Partial: ${escapeHtml(String(twoBulletsStats.partialTrades))}</div>
+        </article>
+        <article class="stat">
+          <div class="label">B1 Hit Rate</div>
+          <div class="value">${escapeHtml(`${twoBulletsStats.b1HitCount}/${twoBulletsStats.completedTrades} (${twoBulletsStats.b1HitRate.toFixed(0)}%)`)}</div>
+          <div class="micro-hint">Completed 2B trades only</div>
+        </article>
+        <article class="stat">
+          <div class="label">B2 Win Rate</div>
+          <div class="value">${escapeHtml(`${twoBulletsStats.b2WinCount}/${twoBulletsStats.b2QualifiedCount} (${twoBulletsStats.b2WinRate.toFixed(0)}%)`)}</div>
+          <div class="micro-hint">Only where B1 hit and B2 closed</div>
+        </article>
+        <article class="stat">
+          <div class="label">Average Effective R:R</div>
+          <div class="value">${escapeHtml(`1:${twoBulletsStats.avgEffectiveR.toFixed(1)}`)}</div>
+        </article>
+        <article class="stat stat-wide">
+          <div class="label">Runner Alpha <span class="info-dot" title="Extra R gained from B2 runners vs closing everything at 1:1.">i</span></div>
+          <div class="value">${escapeHtml(`${twoBulletsStats.runnerAlphaTotal >= 0 ? "+" : ""}${twoBulletsStats.runnerAlphaTotal.toFixed(2)}R gained from runners across ${twoBulletsStats.completedTrades} completed trades.`)}</div>
+          <div class="micro-hint">${escapeHtml(`${twoBulletsStats.runnerAlphaAvg >= 0 ? "+" : ""}${twoBulletsStats.runnerAlphaAvg.toFixed(2)}R per trade on average.`)}</div>
+        </article>
+      </div>
+    </section>
+    ` : ""}
     <div id="analyticsVisuals" class="chart-grid"></div>
     <div id="analyticsTables" class="table-wrap"></div>
   `;
@@ -7111,6 +7921,50 @@ function computeAnalytics(rows) {
     pnlRows.map((trade) => trade.pnl)
   );
 
+  const twoBulletsRows = rows.filter((trade) => isTwoBulletsTrade(trade));
+  const twoBulletsCompleted = twoBulletsRows.filter((trade) => trade.status === "closed");
+  const twoBulletsPartial = twoBulletsRows.filter((trade) => {
+    const derived = computeTwoBulletsDerived({ b1: trade.b1, b2: trade.b2 });
+    return derived.isPartial;
+  });
+
+  const twoBulletsEffectiveRValues = twoBulletsCompleted
+    .map((trade) => {
+      const derived = computeTwoBulletsDerived({ b1: trade.b1, b2: trade.b2 });
+      if (Number.isFinite(derived.totalPnl) && Number.isFinite(derived.baseRisk) && derived.baseRisk > 0) {
+        return derived.totalPnl / derived.baseRisk;
+      }
+      if (derived.b1Outcome === "Loss" && derived.b2Outcome === "Loss") {
+        return -1;
+      }
+      if (derived.b1Outcome === "Win" && derived.b2Outcome === "Breakeven") {
+        return 1;
+      }
+      return null;
+    })
+    .filter((value) => Number.isFinite(value));
+
+  const b1HitCount = twoBulletsCompleted.filter((trade) => normalizeB1Outcome(trade.b1?.outcome) === "Win").length;
+  const b1HitRate = twoBulletsCompleted.length ? (b1HitCount / twoBulletsCompleted.length) * 100 : 0;
+  const b2QualifiedRows = twoBulletsCompleted.filter((trade) => normalizeB1Outcome(trade.b1?.outcome) === "Win");
+  const b2WinCount = b2QualifiedRows.filter((trade) => normalizeB2Outcome(trade.b2?.outcome) === "Win").length;
+  const b2WinRate = b2QualifiedRows.length ? (b2WinCount / b2QualifiedRows.length) * 100 : 0;
+  const avgEffectiveR = twoBulletsEffectiveRValues.length ? avg(twoBulletsEffectiveRValues) : 0;
+
+  const runnerAlphaByTrade = twoBulletsCompleted
+    .map((trade) => {
+      const derived = computeTwoBulletsDerived({ b1: trade.b1, b2: trade.b2 });
+      if (!(Number.isFinite(derived.totalPnl) && Number.isFinite(derived.baseRisk) && derived.baseRisk > 0)) {
+        return null;
+      }
+      const actualR = derived.totalPnl / derived.baseRisk;
+      const baselineR = normalizeB1Outcome(trade.b1?.outcome) === "Win" ? 1 : -1;
+      return actualR - baselineR;
+    })
+    .filter((value) => Number.isFinite(value));
+  const runnerAlphaTotal = runnerAlphaByTrade.length ? sum(runnerAlphaByTrade) : 0;
+  const runnerAlphaAvg = runnerAlphaByTrade.length ? avg(runnerAlphaByTrade) : 0;
+
   return {
     totalTrades,
     closedTrades: closedRows.length,
@@ -7228,6 +8082,19 @@ function computeAnalytics(rows) {
     fAvgLossPerTradeThisMonth,
     topMissingRequiredConfluenceFMonth,
     topMissingRequiredConfluenceFMonthCount,
+    twoBulletsStats: {
+      totalTrades: twoBulletsRows.length,
+      completedTrades: twoBulletsCompleted.length,
+      partialTrades: twoBulletsPartial.length,
+      b1HitCount,
+      b1HitRate,
+      b2QualifiedCount: b2QualifiedRows.length,
+      b2WinCount,
+      b2WinRate,
+      avgEffectiveR,
+      runnerAlphaTotal,
+      runnerAlphaAvg,
+    },
   };
 }
 
@@ -7310,6 +8177,13 @@ function exportCsv(rows, filename) {
     "outcome",
     "status",
     "pnl_usd",
+    "two_bullets",
+    "b1_outcome",
+    "b1_pnl",
+    "b1_risk_amount",
+    "b2_outcome",
+    "b2_pnl",
+    "b2_target_rr",
     "note",
     "before_image_present",
     "after_image_present",
@@ -7352,6 +8226,13 @@ function exportCsv(rows, filename) {
     row.outcome || "",
     row.status,
     Number.isFinite(row.pnl) ? row.pnl : "",
+    row.two_bullets ? "Yes" : "No",
+    row.b1?.outcome || "",
+    Number.isFinite(row.b1?.pnl) ? row.b1.pnl : "",
+    Number.isFinite(row.b1?.risk_amount) ? row.b1.risk_amount : "",
+    row.b2?.outcome || "",
+    Number.isFinite(row.b2?.pnl) ? row.b2.pnl : "",
+    Number.isFinite(row.b2?.target_rr) ? row.b2.target_rr : "",
     row.note || "",
     row.before_image_id ? "Yes" : "No",
     row.after_image_id ? "Yes" : "No",
@@ -7580,8 +8461,20 @@ function normalizeTrade(trade) {
   const presentConfluences = Array.isArray(trade.present_confluences) ? trade.present_confluences : [];
   const inferred = inferConfluence(strategy, presentConfluences);
 
+  const twoBullets = Boolean(trade.two_bullets);
+  const derivedTwoBullets = computeTwoBulletsDerived({
+    b1: trade.b1,
+    b2: trade.b2,
+  });
+
   const rawStatus = String(trade.status || "").toLowerCase().trim();
-  const status = rawStatus === "open" || rawStatus === "closed" ? rawStatus : trade.outcome ? "closed" : "open";
+  const status = twoBullets
+    ? derivedTwoBullets.status
+    : rawStatus === "open" || rawStatus === "closed"
+      ? rawStatus
+      : trade.outcome
+        ? "closed"
+        : "open";
 
   return {
     ...trade,
@@ -7620,8 +8513,29 @@ function normalizeTrade(trade) {
     missing_quality: Array.isArray(trade.missing_quality) ? trade.missing_quality : inferred.missing_quality,
     raw_score_present: Number.isFinite(trade.raw_score_present) ? trade.raw_score_present : inferred.raw_score_present,
     raw_score_total: Number.isFinite(trade.raw_score_total) ? trade.raw_score_total : inferred.raw_score_total,
-    outcome: trade.outcome || "",
-    pnl: Number.isFinite(trade.pnl) ? trade.pnl : null,
+    outcome: twoBullets ? derivedTwoBullets.outcome : trade.outcome || "",
+    pnl: twoBullets
+      ? Number.isFinite(derivedTwoBullets.totalPnl)
+        ? derivedTwoBullets.totalPnl
+        : null
+      : Number.isFinite(trade.pnl)
+        ? trade.pnl
+        : null,
+    two_bullets: twoBullets,
+    b1: twoBullets
+      ? {
+          outcome: derivedTwoBullets.b1Outcome,
+          pnl: Number.isFinite(derivedTwoBullets.b1Pnl) ? derivedTwoBullets.b1Pnl : null,
+          risk_amount: Number.isFinite(derivedTwoBullets.baseRisk) ? derivedTwoBullets.baseRisk : null,
+        }
+      : null,
+    b2: twoBullets
+      ? {
+          outcome: derivedTwoBullets.b2Outcome,
+          pnl: Number.isFinite(derivedTwoBullets.b2Pnl) ? derivedTwoBullets.b2Pnl : null,
+          target_rr: normalizeB2TargetRr(trade?.b2?.target_rr),
+        }
+      : null,
     note: trade.note || "",
     captured_at_utc: trade.captured_at_utc || trade.created_at || new Date().toISOString(),
     captured_at_local: trade.captured_at_local || formatDateTime(trade.captured_at_utc || trade.created_at),
