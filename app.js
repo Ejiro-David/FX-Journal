@@ -38,6 +38,7 @@ function createBaseSettings() {
     showInsightReel: false,
     strategyMode: "all",
     sessionOptions: [...DEFAULT_SESSION_OPTIONS],
+    ruleChangeMode: "new_only",
   };
 }
 
@@ -85,14 +86,15 @@ const STRATEGY_CONFIG = {
   },
 };
 
-// Keep settings editor backward-compatible while scoring uses STRATEGY_CONFIG.
 const CONFLUENCE_RULES = {
   SMC: {
-    required: [...STRATEGY_CONFIG.SMC.core, ...STRATEGY_CONFIG.SMC.backing],
+    core: [...STRATEGY_CONFIG.SMC.core],
+    backing: [...STRATEGY_CONFIG.SMC.backing],
     quality: [...STRATEGY_CONFIG.SMC.quality],
   },
   ICC: {
-    required: [...STRATEGY_CONFIG.ICC.core, ...STRATEGY_CONFIG.ICC.backing],
+    core: [...STRATEGY_CONFIG.ICC.core],
+    backing: [...STRATEGY_CONFIG.ICC.backing],
     quality: [...STRATEGY_CONFIG.ICC.quality],
   },
 };
@@ -148,25 +150,15 @@ const TAB_INSIGHTS = {
     "closed_trades",
     "open_trades",
     "net_pnl",
-    "gross_profit",
-    "gross_loss",
     "win_rate",
-    "loss_rate",
-    "breakeven_rate",
-    "profit_factor",
     "expectancy_per_trade",
+    "profit_factor",
     "average_win",
     "average_loss",
-    "win_loss_size_ratio",
-    "outcome_distribution",
   ],
   risk: [
-    "equity_curve",
-    "drawdown_curve",
     "max_drawdown",
     "current_drawdown",
-    "longest_drawdown_duration",
-    "best_trade",
     "worst_trade",
     "max_win_streak",
     "max_loss_streak",
@@ -174,47 +166,31 @@ const TAB_INSIGHTS = {
   ],
   confluence: [
     "strategy_mix",
-    "strategy_net_pnl",
-    "strategy_win_rate",
-    "confluence_score_distribution",
-    "setup_integrity_distribution",
     "setup_grade_distribution",
-    "missing_confluence_frequency_overall",
+    "full_soft_hard_performance",
     "missing_required_frequency",
     "missing_quality_frequency",
-    "full_soft_hard_performance",
     "confluence_compliance_trend",
-    "grade_vs_pnl_distribution",
   ],
   sessions: [
-    "session_mix_share",
     "session_net_pnl",
     "session_win_rate",
     "session_expectancy",
-    "session_x_strategy_heatmap",
-    "session_x_pair_heatmap",
-    "hour_trade_frequency",
     "hour_expectancy",
-    "day_of_week_performance",
     "time_to_close_distribution",
   ],
   market: [
     "pair_pnl_ranking",
-    "pair_win_rate_ranking",
     "pair_expectancy_ranking",
     "direction_split_pnl",
     "direction_split_win_rate",
-    "lot_size_vs_pnl_scatter",
     "lot_size_bucket_expectancy",
-    "open_trade_aging",
   ],
   behavior: [
     "image_completeness_rate",
-    "before_presence_rate",
-    "after_presence_rate",
-    "image_hydration_misses",
     "note_usage_and_median_length",
     "edit_frequency_per_trade",
+    "image_hydration_misses",
   ],
 };
 
@@ -571,11 +547,16 @@ function scheduleCloudSync(delayMs = 0) {
     return;
   }
   window.clearTimeout(cloudSyncTimer);
+  
+  // Rate limit: enforce minimum interval between sync attempts
+  const timeSinceLastSync = Date.now() - lastCloudSyncTime;
+  const actualDelay = Math.max(Number(delayMs) || 0, Math.max(0, MIN_SYNC_INTERVAL_MS - timeSinceLastSync));
+  
   cloudSyncTimer = window.setTimeout(() => {
     runCloudSync().catch((error) => {
       console.error(error);
     });
-  }, Math.max(0, Number(delayMs) || 0));
+  }, actualDelay);
 }
 
 function buildImageStoragePath(userId, imageId) {
@@ -589,6 +570,12 @@ function updateCloudSyncUi() {
 
   if (syncQueueHintEl) {
     syncQueueHintEl.textContent = `Your data is safe locally. ${pendingLabel} waiting to sync.`;
+  }
+
+  if (syncLastSyncEl) {
+    syncLastSyncEl.textContent = lastCloudSyncAt
+      ? `Last sync: ${formatDateTime(lastCloudSyncAt)}`
+      : "Last sync: never";
   }
 
   if (authStatusEl) {
@@ -637,6 +624,11 @@ function updateCloudSyncUi() {
 
   syncStatusPillEl.className = className;
   syncStatusPillEl.textContent = label;
+
+  if (settingsSyncCardEl) {
+    const isHealthy = className.includes("is-synced");
+    settingsSyncCardEl.classList.toggle("sync-compact", isHealthy);
+  }
 }
 
 function getTradeById(tradeId) {
@@ -800,11 +792,14 @@ async function runCloudSync(options = {}) {
     await pushCloudQueue();
     await pullCloudSettings();
     await pullCloudTrades();
+    lastCloudSyncAt = new Date().toISOString();
+    lastCloudSyncTime = Date.now(); // Record sync time for rate limiting
     if (showFeedback) {
       showToast("Cloud sync complete", "ok");
     }
   } catch (error) {
     cloudSyncError = error?.message || "Cloud sync failed";
+    lastCloudSyncTime = Date.now(); // Record time even on error to rate limit retries
     if (showFeedback) {
       showToast(cloudSyncError, "bad");
     }
@@ -1070,6 +1065,7 @@ async function pullCloudTrades() {
   setSyncCursor(latestCursor);
 
   if (hasTradeChanges) {
+    invalidateAnalyticsCache();
     syncPairRegistryFromTrades(trades);
     refreshPairSelectors();
     renderAll();
@@ -1110,9 +1106,21 @@ function parsePnl(rawValue) {
   if (!raw) {
     return null;
   }
+  // Validate format: optional +/-, digits, optional decimal
+  if (!/^[+\-]?\d+(\.\d+)?$/.test(raw.replace(/[$,\s]/g, ""))) {
+    return null; // Reject invalid format
+  }
   const cleaned = raw.replace(/[$,\s]/g, "");
   const value = Number(cleaned);
-  return Number.isFinite(value) ? value : NaN;
+  return Number.isFinite(value) ? value : null;
+}
+
+function validatePnlInput(rawValue) {
+  const result = parsePnl(rawValue);
+  if (String(rawValue || "").trim() && result === null) {
+    return "PnL must be a number (e.g., +50.25 or -10)";
+  }
+  return null;
 }
 
 function getMissingEntryFields({ pair, direction, strategy, sessions }) {
@@ -1585,14 +1593,18 @@ const syncNowBtn = document.getElementById("syncNowBtn");
 const authStatusEl = document.getElementById("authStatus");
 const syncQueueHintEl = document.getElementById("syncQueueHint");
 const syncStatusPillEl = document.getElementById("syncStatusPill");
+const syncLastSyncEl = document.getElementById("syncLastSync");
+const settingsSyncCardEl = document.getElementById("settingsSyncCard");
 const settingsStrategyTabsEl = document.getElementById("settingsStrategyTabs");
 const settingsNewStrategyEl = document.getElementById("settingsNewStrategy");
 const settingsAddStrategyBtn = document.getElementById("settingsAddStrategy");
+const settingsDuplicateStrategyBtn = document.getElementById("settingsDuplicateStrategy");
 const settingsNewSessionEl = document.getElementById("settingsNewSession");
 const settingsAddSessionBtn = document.getElementById("settingsAddSession");
 const settingsSessionEditorEl = document.getElementById("settingsSessionEditor");
 const settingsSaveSessionsBtn = document.getElementById("settingsSaveSessions");
 const settingsRuleEditorEl = document.getElementById("settingsRuleEditor");
+const settingsRulesNewOnlyEl = document.getElementById("settingsRulesNewOnly");
 const settingsSaveRulesBtn = document.getElementById("settingsSaveRules");
 const settingsResetRulesBtn = document.getElementById("settingsResetRules");
 
@@ -1606,6 +1618,8 @@ const lotDecBtn = document.getElementById("lotDec");
 const lotIncBtn = document.getElementById("lotInc");
 const editLotDecBtn = document.getElementById("editLotDec");
 const editLotIncBtn = document.getElementById("editLotInc");
+const lotPresetButtons = Array.from(document.querySelectorAll("[data-lot-preset]"));
+const afterScreenshotFieldEl = document.getElementById("afterScreenshotField");
 
 const editModal = document.getElementById("edit-modal");
 const editForm = document.getElementById("edit-form");
@@ -1677,7 +1691,10 @@ let pairRegistry = [];
 let authUser = null;
 let isCloudSyncing = false;
 let cloudSyncTimer = 0;
+let lastCloudSyncTime = 0; // Track last sync time for rate limiting
+const MIN_SYNC_INTERVAL_MS = 3000; // Minimum 3 seconds between sync attempts
 let cloudSyncError = "";
+let lastCloudSyncAt = "";
 let appSettings = createDefaultSettings();
 let settingsEditorStrategy = DEFAULT_STRATEGIES[0];
 let settingsRuleDraft = cloneConfluenceRules(CONFLUENCE_RULES);
@@ -1707,6 +1724,37 @@ let imageHydrationMisses = Number(localStorage.getItem(IMAGE_HYDRATION_MISS_KEY)
 
 if (!Number.isFinite(imageHydrationMisses) || imageHydrationMisses < 0) {
   imageHydrationMisses = 0;
+}
+
+// Analytics caching: memoize computeAnalytics outputs
+let analyticsCache = null;
+let analyticsCacheKey = "";
+
+function getAnalyticsCacheKey(rows) {
+  // Simple key: trade count + last trade id + filter state
+  const count = (Array.isArray(rows) ? rows.length : 0);
+  const lastId = rows?.length ? rows[rows.length - 1]?.id : "";
+  const pair = filterPairEl?.value || "";
+  const session = filterSessionEl?.value || "";
+  const outcome = filterOutcomeEl?.value || "";
+  const strategy = filterStrategyEl?.value || "";
+  const integrity = filterIntegrityEl?.value || "";
+  return `${count}:${lastId}:${pair}:${session}:${outcome}:${strategy}:${integrity}`;
+}
+
+function getAnalyticsCached(rows) {
+  const key = getAnalyticsCacheKey(rows);
+  if (analyticsCache && analyticsCacheKey === key) {
+    return analyticsCache;
+  }
+  analyticsCache = computeAnalytics(rows);
+  analyticsCacheKey = key;
+  return analyticsCache;
+}
+
+function invalidateAnalyticsCache() {
+  analyticsCache = null;
+  analyticsCacheKey = "";
 }
 
 function incrementImageHydrationMisses(count = 1) {
@@ -1787,7 +1835,7 @@ function bindEvents() {
       refreshStrategySelectors();
       syncEntryFlowState({ forceChecklistRerender: true });
       renderAll();
-      showToast(`Strategy mode: ${appSettings.strategyMode === "all" ? "All" : appSettings.strategyMode}`, "ok");
+      showToast(`Enabled strategies: ${appSettings.strategyMode === "all" ? "All" : appSettings.strategyMode}`, "ok");
     });
   }
   if (authSignInBtn) {
@@ -1891,6 +1939,23 @@ function bindEvents() {
       if (!(target instanceof HTMLElement)) {
         return;
       }
+
+      const moveButton = target.closest("[data-move-session-index]");
+      if (moveButton) {
+        const index = Number(moveButton.getAttribute("data-move-session-index"));
+        const delta = Number(moveButton.getAttribute("data-move-session-delta"));
+        const nextIndex = index + delta;
+        if (!Number.isInteger(index) || !Number.isInteger(delta) || nextIndex < 0 || nextIndex >= settingsSessionDraft.length) {
+          return;
+        }
+        const draft = [...settingsSessionDraft];
+        const [moved] = draft.splice(index, 1);
+        draft.splice(nextIndex, 0, moved);
+        settingsSessionDraft = draft;
+        renderSettingsSessionEditor();
+        return;
+      }
+
       const removeButton = target.closest("[data-remove-session-index]");
       if (!removeButton) {
         return;
@@ -1917,7 +1982,7 @@ function bindEvents() {
       }
       const kind = target.dataset.ruleKind;
       const index = Number(target.dataset.ruleIndex);
-      if ((kind !== "required" && kind !== "quality") || !Number.isInteger(index) || index < 0) {
+      if ((kind !== "core" && kind !== "backing" && kind !== "quality") || !Number.isInteger(index) || index < 0) {
         return;
       }
       settingsRuleDraft[settingsEditorStrategy][kind][index] = target.value;
@@ -1933,7 +1998,7 @@ function bindEvents() {
       if (removeButton) {
         const kind = removeButton.getAttribute("data-remove-rule-kind");
         const index = Number(removeButton.getAttribute("data-remove-rule-index"));
-        if ((kind === "required" || kind === "quality") && Number.isInteger(index) && index >= 0) {
+        if ((kind === "core" || kind === "backing" || kind === "quality") && Number.isInteger(index) && index >= 0) {
           settingsRuleDraft[settingsEditorStrategy][kind].splice(index, 1);
           renderSettingsRuleEditor();
         }
@@ -1945,7 +2010,7 @@ function bindEvents() {
         return;
       }
       const kind = addButton.getAttribute("data-add-rule-kind");
-      if (kind !== "required" && kind !== "quality") {
+      if (kind !== "core" && kind !== "backing" && kind !== "quality") {
         return;
       }
       const input = settingsRuleEditorEl.querySelector(`[data-add-rule-input="${kind}"]`);
@@ -1958,6 +2023,9 @@ function bindEvents() {
       input.value = "";
       renderSettingsRuleEditor();
     });
+  }
+  if (settingsDuplicateStrategyBtn) {
+    settingsDuplicateStrategyBtn.addEventListener("click", duplicateStrategyFromSettings);
   }
   if (settingsSaveRulesBtn) {
     settingsSaveRulesBtn.addEventListener("click", async () => {
@@ -2055,18 +2123,40 @@ function bindEvents() {
     }
     activeAnalyticsTab = tab;
     setAnalyticsActiveTab(tab);
-    renderAnalytics(getFilteredTrades());
+    renderAnalytics(getAnalyticsTrades());
   });
 
   viewListBtn.addEventListener("click", () => setHistoryView("list"));
   viewGridBtn.addEventListener("click", () => setHistoryView("grid"));
 
-  lotDecBtn.addEventListener("click", () => adjustLot(lotSizeEl, -1));
-  lotIncBtn.addEventListener("click", () => adjustLot(lotSizeEl, 1));
-  editLotDecBtn.addEventListener("click", () => adjustLot(editLotSizeEl, -1));
-  editLotIncBtn.addEventListener("click", () => adjustLot(editLotSizeEl, 1));
+  if (lotDecBtn && lotSizeEl) {
+    lotDecBtn.addEventListener("click", () => adjustLot(lotSizeEl, -1));
+  }
+  if (lotIncBtn && lotSizeEl) {
+    lotIncBtn.addEventListener("click", () => adjustLot(lotSizeEl, 1));
+  }
+  if (editLotDecBtn && editLotSizeEl) {
+    editLotDecBtn.addEventListener("click", () => adjustLot(editLotSizeEl, -1));
+  }
+  if (editLotIncBtn && editLotSizeEl) {
+    editLotIncBtn.addEventListener("click", () => adjustLot(editLotSizeEl, 1));
+  }
 
-  lotSizeEl.addEventListener("change", () => normalizeLotStep(lotSizeEl));
+  lotPresetButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const preset = Number(button.getAttribute("data-lot-preset"));
+      if (!Number.isFinite(preset)) {
+        return;
+      }
+      lotSizeEl.value = normalizeLotSizeValue(preset).toFixed(2);
+      syncLotPresetState();
+    });
+  });
+
+  lotSizeEl.addEventListener("change", () => {
+    normalizeLotStep(lotSizeEl);
+    syncLotPresetState();
+  });
   editLotSizeEl.addEventListener("change", () => normalizeLotStep(editLotSizeEl));
 
   exportAllBtn.addEventListener("click", () => exportCsv(trades, "lazy-but-data-v4-all.csv"));
@@ -2608,10 +2698,8 @@ function fillTimeSuggestions() {
 function toggleEntryManualTime() {
   entryManualTimeEnabled = !entryManualTimeEnabled;
   manualTimeFieldsEl.style.display = entryManualTimeEnabled ? "grid" : "none";
-  manualTimeToggleEl.textContent = entryManualTimeEnabled ? "Use Device Time" : "Set Time Manually";
-  entryCapturedHintEl.textContent = entryManualTimeEnabled
-    ? "Timestamp: manual override enabled"
-    : "Timestamp: device time (auto)";
+  manualTimeToggleEl.textContent = entryManualTimeEnabled ? "Auto" : "Edit";
+  entryCapturedHintEl.textContent = entryManualTimeEnabled ? "Time: Manual override" : "Time: Auto";
   if (entryManualTimeEnabled && !tradeDateEl.value) {
     applyDefaultDateTime();
   }
@@ -2634,32 +2722,19 @@ function applySavedDefaults() {
   lotSizeEl.value = DEFAULT_LOT_SIZE.toFixed(2);
 
   if (defaults) {
-    if (defaults.pair) {
-      registerPair(defaults.pair);
-      pairEl.value = normalizePairCode(defaults.pair);
-      pairEl.dataset.prevPair = normalizePairCode(defaults.pair);
-    }
-    if (defaults.direction) {
-      directionEl.value = defaults.direction;
-    }
     if (defaults.lotSize) {
       const parsedLot = Number(defaults.lotSize);
       if (Number.isFinite(parsedLot) && parsedLot > 0) {
         lotSizeEl.value = normalizeLotSizeValue(parsedLot).toFixed(2);
       }
     }
-    if (defaults.strategy && getAllowedStrategies().includes(defaults.strategy)) {
-      strategyEl.value = defaults.strategy;
-    }
   }
 
-  if (getAllowedStrategies().length === 1) {
-    strategyEl.value = getAllowedStrategies()[0];
-  }
-
+  pairEl.dataset.prevPair = normalizePairCode(pairEl.value);
   strategyEl.dataset.prevStrategy = normalizeStrategyName(strategyEl.value);
 
   syncEntryFlowState({ forceChecklistRerender: true });
+  syncLotPresetState();
 }
 
 function syncEntryFlowState(options = {}) {
@@ -2679,6 +2754,10 @@ function syncEntryFlowState(options = {}) {
     } else {
       pnlEl.placeholder = "+3.50 or -1.20";
     }
+  }
+
+  if (afterScreenshotFieldEl) {
+    afterScreenshotFieldEl.classList.toggle("is-secondary", !outcomeSelected);
   }
 
   if (createConfluenceDetailsEl) {
@@ -2728,6 +2807,15 @@ function syncEntryFlowState(options = {}) {
   );
 }
 
+function syncLotPresetState() {
+  const lot = normalizeLotSizeValue(lotSizeEl.value);
+  lotPresetButtons.forEach((button) => {
+    const preset = Number(button.getAttribute("data-lot-preset"));
+    const isActive = Number.isFinite(preset) && Math.abs(preset - lot) < 0.0001;
+    button.classList.toggle("is-active", isActive);
+  });
+}
+
 function getStoredTheme() {
   return "dark";
 }
@@ -2774,6 +2862,7 @@ function handleClear(options = {}) {
   createAfterBinder.clearSilent();
 
   syncEntryFlowState({ forceChecklistRerender: true });
+  syncLotPresetState();
 
   errorEl.textContent = "";
   if (shouldShowToast) {
@@ -2803,6 +2892,7 @@ function createDefaultSettings() {
     showInsightReel: false,
     strategyMode: "all",
     sessionOptions: [...DEFAULT_SESSION_OPTIONS],
+    ruleChangeMode: "new_only",
     confluenceRules: cloneConfluenceRules(CONFLUENCE_RULES),
   };
 }
@@ -2971,8 +3061,12 @@ function cloneConfluenceRules(rules) {
   const out = {};
   strategies.forEach((strategy) => {
     const source = sourceMap[strategy] || {};
+    const legacyRequired = Array.isArray(source.required) ? [...source.required] : [];
+    const coreSource = Array.isArray(source.core) ? source.core : legacyRequired;
+    const backingSource = Array.isArray(source.backing) ? source.backing : [];
     out[strategy] = {
-      required: Array.isArray(source.required) ? [...source.required] : [],
+      core: normalizeConfluenceLabels(coreSource),
+      backing: normalizeConfluenceLabels(backingSource),
       quality: Array.isArray(source.quality) ? [...source.quality] : [],
     };
   });
@@ -3005,11 +3099,13 @@ function normalizeConfluenceRulesMap(rawRules) {
 
   strategies.forEach((strategy) => {
     const source = sourceMap[strategy] || defaults[strategy] || {};
-    const required = normalizeConfluenceLabels(source.required);
+    const legacyRequired = normalizeConfluenceLabels(source.required);
+    const core = normalizeConfluenceLabels(source.core || legacyRequired);
+    const backing = normalizeConfluenceLabels(source.backing || []);
     const qualityRaw = normalizeConfluenceLabels(source.quality);
-    const requiredSet = new Set(required.map((item) => item.toLowerCase()));
-    const quality = qualityRaw.filter((item) => !requiredSet.has(item.toLowerCase()));
-    out[strategy] = { required, quality };
+    const reserved = new Set([...core, ...backing].map((item) => item.toLowerCase()));
+    const quality = qualityRaw.filter((item) => !reserved.has(item.toLowerCase()));
+    out[strategy] = { core, backing, quality };
   });
 
   return out;
@@ -3031,6 +3127,7 @@ function normalizeSettings(rawSettings) {
     showInsightReel: rawSettings.showInsightReel !== false,
     strategyMode,
     sessionOptions,
+    ruleChangeMode: rawSettings.ruleChangeMode === "recompute_all" ? "recompute_all" : "new_only",
     confluenceRules,
   };
 }
@@ -3136,7 +3233,7 @@ function fillStrategyOptions(selectEl, includeBlank, selectedValue = "", options
 
   if (selected && values.includes(selected)) {
     selectEl.value = selected;
-  } else if (values.length === 1) {
+  } else if (values.length === 1 && includeLegacy) {
     selectEl.value = values[0];
   } else {
     selectEl.value = shouldIncludeBlank ? "" : values[0] || "";
@@ -3249,7 +3346,7 @@ function renderStrategyModeOptions() {
   }
   const strategies = getConfiguredStrategies();
   const options = [
-    { value: "all", label: "All strategies" },
+    { value: "all", label: "All enabled" },
     ...strategies.map((strategy) => ({ value: strategy, label: `${strategy} only` })),
   ];
 
@@ -3269,6 +3366,9 @@ function renderStrategyModeOptions() {
 function renderSettingsPanel() {
   if (settingShowInsightReelEl) {
     settingShowInsightReelEl.checked = Boolean(appSettings.showInsightReel);
+  }
+  if (settingsRulesNewOnlyEl) {
+    settingsRulesNewOnlyEl.checked = appSettings.ruleChangeMode !== "recompute_all";
   }
   renderStrategyModeOptions();
   renderSettingsSessionEditor();
@@ -3312,7 +3412,7 @@ function addStrategyFromSettings(rawName) {
     return;
   }
 
-  settingsRuleDraft[strategy] = { required: [], quality: [] };
+  settingsRuleDraft[strategy] = { core: [], backing: [], quality: [] };
   settingsEditorStrategy = strategy;
   if (settingsNewStrategyEl) {
     settingsNewStrategyEl.value = "";
@@ -3322,11 +3422,38 @@ function addStrategyFromSettings(rawName) {
   showToast(`Added ${strategy}. Add confluences, then save rules.`, "ok");
 }
 
+function duplicateStrategyFromSettings() {
+  const source = settingsEditorStrategy;
+  if (!source || !settingsRuleDraft[source]) {
+    showToast("Select a strategy first", "bad");
+    return;
+  }
+
+  const existing = getDraftStrategies();
+  let suffix = 2;
+  let nextName = `${source} v${suffix}`;
+  while (existing.some((item) => item.toLowerCase() === nextName.toLowerCase())) {
+    suffix += 1;
+    nextName = `${source} v${suffix}`;
+  }
+
+  const sourceRules = settingsRuleDraft[source];
+  settingsRuleDraft[nextName] = {
+    core: [...(sourceRules.core || [])],
+    backing: [...(sourceRules.backing || [])],
+    quality: [...(sourceRules.quality || [])],
+  };
+  settingsEditorStrategy = nextName;
+  renderSettingsRuleTabs();
+  renderSettingsRuleEditor();
+  showToast(`Duplicated ${source} -> ${nextName}`, "ok");
+}
+
 function renderSettingsRuleEditor() {
   if (!settingsRuleEditorEl) {
     return;
   }
-  const rules = settingsRuleDraft?.[settingsEditorStrategy] || { required: [], quality: [] };
+  const rules = settingsRuleDraft?.[settingsEditorStrategy] || { core: [], backing: [], quality: [] };
 
   const renderRuleList = (kind) => {
     const items = rules[kind] || [];
@@ -3362,15 +3489,26 @@ function renderSettingsRuleEditor() {
   settingsRuleEditorEl.innerHTML = `
     <div class="settings-rule-columns">
       <section class="settings-rule-column">
-        <div class="confluence-label">Required</div>
-        <div class="settings-rule-list">${renderRuleList("required")}</div>
+        <div class="confluence-label">Core</div>
+        <div class="micro-hint">Missing makes setup invalid.</div>
+        <div class="settings-rule-list">${renderRuleList("core")}</div>
         <div class="settings-rule-add">
-          <input type="text" placeholder="Add required confluence" data-add-rule-input="required" maxlength="120" />
-          <button type="button" class="btn btn-ghost btn-tiny" data-add-rule-kind="required">Add</button>
+          <input type="text" placeholder="Add core confluence" data-add-rule-input="core" maxlength="120" />
+          <button type="button" class="btn btn-ghost btn-tiny" data-add-rule-kind="core">Add</button>
+        </div>
+      </section>
+      <section class="settings-rule-column">
+        <div class="confluence-label">Backing</div>
+        <div class="micro-hint">Context and support layer.</div>
+        <div class="settings-rule-list">${renderRuleList("backing")}</div>
+        <div class="settings-rule-add">
+          <input type="text" placeholder="Add backing confluence" data-add-rule-input="backing" maxlength="120" />
+          <button type="button" class="btn btn-ghost btn-tiny" data-add-rule-kind="backing">Add</button>
         </div>
       </section>
       <section class="settings-rule-column">
         <div class="confluence-label">Quality</div>
+        <div class="micro-hint">Improves entry quality.</div>
         <div class="settings-rule-list">${renderRuleList("quality")}</div>
         <div class="settings-rule-add">
           <input type="text" placeholder="Add quality confluence" data-add-rule-input="quality" maxlength="120" />
@@ -3400,15 +3538,37 @@ function renderSettingsSessionEditor() {
                 maxlength="24"
                 value="${escapeHtmlAttr(session)}"
               />
-              <button
-                type="button"
-                class="settings-rule-remove"
-                data-remove-session-index="${index}"
-                aria-label="Remove session"
-                title="Remove session"
-              >
-                <span aria-hidden="true">×</span>
-              </button>
+              <div class="settings-session-actions">
+                <button
+                  type="button"
+                  class="settings-rule-remove settings-rule-move"
+                  data-move-session-index="${index}"
+                  data-move-session-delta="-1"
+                  aria-label="Move session up"
+                  title="Move up"
+                >
+                  <span aria-hidden="true">↑</span>
+                </button>
+                <button
+                  type="button"
+                  class="settings-rule-remove settings-rule-move"
+                  data-move-session-index="${index}"
+                  data-move-session-delta="1"
+                  aria-label="Move session down"
+                  title="Move down"
+                >
+                  <span aria-hidden="true">↓</span>
+                </button>
+                <button
+                  type="button"
+                  class="settings-rule-remove"
+                  data-remove-session-index="${index}"
+                  aria-label="Remove session"
+                  title="Remove session"
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              </div>
             </div>
           `
         )
@@ -3469,26 +3629,50 @@ async function saveSettingsRules() {
   try {
     const normalized = normalizeConfluenceRulesMap(settingsRuleDraft);
     const configured = Object.keys(normalized);
-    const missingRequired = configured.find((strategy) => !(normalized[strategy]?.required || []).length);
-    if (missingRequired) {
-      showToast(`${missingRequired}: add at least one required confluence`, "bad");
+    const missingCore = configured.find((strategy) => !(normalized[strategy]?.core || []).length);
+    if (missingCore) {
+      showToast(`${missingCore}: add at least one core confluence`, "bad");
       return;
+    }
+
+    const missingBacking = configured.find((strategy) => !(normalized[strategy]?.backing || []).length);
+    if (missingBacking) {
+      showToast(`${missingBacking}: add at least one backing confluence`, "bad");
+      return;
+    }
+
+    const applyNewOnly = Boolean(settingsRulesNewOnlyEl?.checked);
+
+    if (!applyNewOnly) {
+      const proceed = confirm("Recompute existing trades with the new rule set? This will change historical analytics.");
+      if (!proceed) {
+        showToast("Rule save cancelled", "bad");
+        return;
+      }
     }
 
     appSettings.confluenceRules = normalized;
     appSettings.strategyMode = normalizeStrategyMode(appSettings.strategyMode, { strategies: configured });
+    appSettings.ruleChangeMode = applyNewOnly ? "new_only" : "recompute_all";
     settingsRuleDraft = cloneConfluenceRules(normalized);
     saveAppSettings();
 
     refreshStrategySelectors();
     renderSettingsPanel();
-    const updatedCount = await recomputeTradesForCurrentRules();
+    let updatedCount = 0;
+    if (!applyNewOnly) {
+      updatedCount = await recomputeTradesForCurrentRules();
+    }
     syncEntryFlowState({ forceChecklistRerender: true });
     renderEditConfluenceChecklist();
     updateEditConfluenceSummary();
     renderAll();
 
-    showToast(`Confluence rules saved (${updatedCount} trades refreshed)`, "ok");
+    if (applyNewOnly) {
+      showToast("Rules saved for new trades only", "ok");
+    } else {
+      showToast(`Confluence rules saved (${updatedCount} trades refreshed)`, "ok");
+    }
   } finally {
     if (settingsSaveRulesBtn) {
       settingsSaveRulesBtn.disabled = false;
@@ -3598,11 +3782,31 @@ function updateInvalidSaveState(buttonEl, strategy, presentConfluences, defaultT
 
 function getStrategyConfig(strategy) {
   const normalized = normalizeStrategyName(strategy);
+  const configuredRules = appSettings?.confluenceRules?.[normalized];
+  if (configuredRules) {
+    const fallback = STRATEGY_CONFIG[normalized] || { entryTypes: [] };
+    return {
+      core: Array.isArray(configuredRules.core) ? [...configuredRules.core] : [],
+      backing: Array.isArray(configuredRules.backing) ? [...configuredRules.backing] : [],
+      quality: Array.isArray(configuredRules.quality) ? [...configuredRules.quality] : [],
+      entryTypes: Array.isArray(fallback.entryTypes) ? [...fallback.entryTypes] : [],
+    };
+  }
   if (STRATEGY_CONFIG[normalized]) {
     return STRATEGY_CONFIG[normalized];
   }
   const fallbackKey = Object.keys(STRATEGY_CONFIG).find((item) => item.toLowerCase() === normalized.toLowerCase());
-  return (fallbackKey && STRATEGY_CONFIG[fallbackKey]) || { core: [], backing: [], quality: [], entryTypes: [] };
+  const fallback = (fallbackKey && STRATEGY_CONFIG[fallbackKey]) || { core: [], backing: [], quality: [], entryTypes: [] };
+  const configuredFallback = fallbackKey ? appSettings?.confluenceRules?.[fallbackKey] : null;
+  if (configuredFallback) {
+    return {
+      core: Array.isArray(configuredFallback.core) ? [...configuredFallback.core] : [...(fallback.core || [])],
+      backing: Array.isArray(configuredFallback.backing) ? [...configuredFallback.backing] : [...(fallback.backing || [])],
+      quality: Array.isArray(configuredFallback.quality) ? [...configuredFallback.quality] : [...(fallback.quality || [])],
+      entryTypes: Array.isArray(fallback.entryTypes) ? [...fallback.entryTypes] : [],
+    };
+  }
+  return fallback;
 }
 
 function getConfluenceRules(strategy) {
@@ -3772,15 +3976,34 @@ function renderConfluenceSummary(summaryEl, strategy, presentConfluences) {
   }
 
   const inferred = inferConfluence(strategy, presentConfluences);
+  const noInteractionYet = !Array.isArray(presentConfluences) || presentConfluences.length === 0;
+  if (noInteractionYet) {
+    summaryEl.className = "confluence-summary muted-empty";
+    summaryEl.innerHTML = "<div><strong>Setup verdict will appear here.</strong></div><div>Select confluences to compute grade.</div>";
+    return;
+  }
+
   const missing = inferred.missing_confluences.length ? inferred.missing_confluences.join(", ") : "None";
+  const topReason =
+    inferred.required_missing_count > 0
+      ? "Missing core confirmations"
+      : inferred.quality_missing_count > 0
+        ? "Missing quality confirmations"
+        : "Setup aligned";
 
   summaryEl.className = "confluence-summary";
   summaryEl.innerHTML = `
-    <div class="confluence-headline"><strong>${escapeHtml(inferred.setup_grade)} - ${escapeHtml(inferred.state_tag)}</strong></div>
+    <div class="confluence-summary-main"><strong>${escapeHtml(inferred.setup_grade)} - ${escapeHtml(inferred.state_tag)}</strong></div>
+    <div class="confluence-summary-reason">${escapeHtml(topReason)}</div>
     <div><strong>Adherence:</strong> ${escapeHtml(inferred.model_adherence)}</div>
-    <div><strong>Core:</strong> ${inferred.core_present_count}/${inferred.core_total_count} · <strong>Backing:</strong> ${inferred.backing_present_count}/${inferred.backing_total_count} · <strong>Quality:</strong> ${inferred.quality_present_count}/${inferred.quality_total_count}</div>
-    <div><strong>Missing:</strong> ${escapeHtml(missing)}</div>
-    <div><strong>Raw score:</strong> ${escapeHtml(inferred.confluence_score)}</div>
+    <details class="confluence-detail-expander">
+      <summary>Show details</summary>
+      <div class="confluence-detail-body">
+        <div><strong>Core:</strong> ${inferred.core_present_count}/${inferred.core_total_count} · <strong>Backing:</strong> ${inferred.backing_present_count}/${inferred.backing_total_count} · <strong>Quality:</strong> ${inferred.quality_present_count}/${inferred.quality_total_count}</div>
+        <div><strong>Missing:</strong> ${escapeHtml(missing)}</div>
+        <div><strong>Raw score:</strong> ${escapeHtml(inferred.confluence_score)}</div>
+      </div>
+    </details>
   `;
 }
 
@@ -3841,14 +4064,22 @@ async function handleCreateSubmit(event) {
       return;
     }
 
-    if (!createImages.beforeBlob && !createImages.afterBlob) {
-      failInline("At least one screenshot is required.");
+    // Validate pair is properly formatted
+    const normalizedPair = normalizePairCode(pairEl.value);
+    if (!normalizedPair || normalizedPair.length < 4) {
+      failInline("Pair must be valid (e.g., EURUSD, GBPUSD).");
+      return;
+    }
+
+    if (!createImages.beforeBlob) {
+      failInline("Primary screenshot is required.");
       return;
     }
 
     const pnl = parsePnl(pnlEl.value);
-    if (pnlEl.value.trim() && !Number.isFinite(pnl)) {
-      failInline("PnL must be numeric (example: +3.50 or -1.20).");
+    const pnlError = validatePnlInput(pnlEl.value);
+    if (pnlError) {
+      failInline(pnlError);
       return;
     }
 
@@ -3927,13 +4158,7 @@ async function handleCreateSubmit(event) {
     await saveTradeRecord(trade);
     trades.unshift(trade);
 
-    saveDefaults({
-      pair: trade.pair,
-      direction: trade.direction,
-      lotSize: Number(trade.lot_size).toFixed(2),
-      strategy: trade.strategy,
-    });
-
+    invalidateAnalyticsCache();
     showToast("Trade saved", "ok");
     quickSavePulse();
     handleClear({ showToast: false });
@@ -4015,6 +4240,22 @@ function getFilteredTrades() {
   });
 }
 
+function getAnalyticsTrades() {
+  return trades.filter((trade) => {
+    const pairOk = !filterPairEl.value || trade.pair === filterPairEl.value;
+    const sessionOk = !filterSessionEl.value || (trade.sessions || []).includes(filterSessionEl.value);
+    const outcomeOk =
+      !filterOutcomeEl.value ||
+      (filterOutcomeEl.value === "__OPEN__" ? trade.status === "open" : trade.outcome === filterOutcomeEl.value);
+    const strategyOk = !filterStrategyEl.value || trade.strategy === filterStrategyEl.value;
+    const adherenceValue = trade.model_adherence || "Bad";
+    const integrityOk = !filterIntegrityEl.value || adherenceValue === filterIntegrityEl.value;
+
+    // Keep Edge Review independent from history status tabs so KPIs remain globally accurate.
+    return pairOk && sessionOk && outcomeOk && strategyOk && integrityOk;
+  });
+}
+
 function renderAll() {
   renderTopInsightReel(trades);
   renderFilteredSections();
@@ -4022,9 +4263,10 @@ function renderAll() {
 
 function renderFilteredSections() {
   updateHistoryFilterMeta();
-  const rows = getFilteredTrades();
-  renderAnalytics(rows);
-  renderHistory(rows);
+  const historyRows = getFilteredTrades();
+  const analyticsRows = getAnalyticsTrades();
+  renderAnalytics(analyticsRows);
+  renderHistory(historyRows);
 }
 
 function sortTradesForDisplay(rows) {
@@ -4095,16 +4337,16 @@ async function renderHistoryGrid(openRows, closedRows) {
   }
 
   releaseHistoryUrls();
-  const urlMap = await loadImageUrls([...openRows, ...closedRows]);
+  const { map: urlMap, missingImageIds } = await loadImageUrls([...openRows, ...closedRows]);
 
   if (openRows.length) {
     historyGalleryEl.appendChild(createGroupTitle("Open Trades", true, openRows.length));
-    historyGalleryEl.appendChild(createCardGroup(openRows, urlMap));
+    historyGalleryEl.appendChild(createCardGroup(openRows, urlMap, missingImageIds));
   }
 
   if (closedRows.length) {
     historyGalleryEl.appendChild(createGroupTitle("Closed Trades", false, closedRows.length));
-    historyGalleryEl.appendChild(createCardGroup(closedRows, urlMap));
+    historyGalleryEl.appendChild(createCardGroup(closedRows, urlMap, missingImageIds));
   }
 }
 
@@ -4115,13 +4357,15 @@ function createGroupTitle(label, isOpen, count) {
   return title;
 }
 
-function createCardGroup(rows, urlMap) {
+function createCardGroup(rows, urlMap, missingImageIds = []) {
   const grid = document.createElement("div");
   grid.className = "history-gallery group-gallery";
 
   rows.forEach((trade) => {
     const beforeUrl = trade.before_image_id ? urlMap.get(trade.before_image_id) : "";
     const afterUrl = trade.after_image_id ? urlMap.get(trade.after_image_id) : "";
+    const beforeMissing = trade.before_image_id && !beforeUrl;
+    const afterMissing = trade.after_image_id && !afterUrl;
 
     const setupClass = integrityClass(trade.setup_integrity);
     const outcomeClass = badgeClassForOutcome(trade.outcome);
@@ -4129,16 +4373,22 @@ function createCardGroup(rows, urlMap) {
 
     const beforeImg = beforeUrl
       ? `<img class="trade-img" src="${beforeUrl}" alt="Before screenshot" />`
-      : `<div class="trade-img muted-empty"></div>`;
+      : `<div class="trade-img muted-empty">${beforeMissing ? "❌" : ""}</div>`;
     const afterImg = afterUrl
       ? `<img class="trade-img" src="${afterUrl}" alt="After screenshot" />`
-      : `<div class="trade-img muted-empty"></div>`;
+      : `<div class="trade-img muted-empty">${afterMissing ? "❌" : ""}</div>`;
 
     const card = document.createElement("article");
     card.className = `trade-card${trade.status === "open" ? " open-trade" : ""}`;
     card.dataset.viewId = trade.id;
     card.setAttribute("role", "button");
     card.tabIndex = 0;
+    
+    // Check if this trade has pending sync operations
+    const queue = loadSyncQueue();
+    const hasPendingSync = queue.some((op) => op.trade_id === trade.id);
+    const syncIndicator = hasPendingSync ? '<span class="badge b-warn" title="Pending cloud sync">📤</span>' : "";
+    
     card.innerHTML = `
       <div class="trade-image-grid">
         ${beforeImg}
@@ -4151,6 +4401,7 @@ function createCardGroup(rows, urlMap) {
         </div>
         <div class="cap-meta">
           ${trade.status === "open" ? '<span class="open-chip">Open</span>' : ""}
+          ${syncIndicator}
           <span class="badge ${setupClass}">${escapeHtml(trade.state_tag || integrityLabel(trade.model_adherence || "Bad"))}</span>
           <span class="badge ${outcomeClass}">${escapeHtml(trade.outcome || "Open")}</span>
           <span class="badge b-info">${escapeHtml(trade.strategy || "-")}</span>
@@ -4925,6 +5176,8 @@ async function updateTrade(id, patch) {
 
   trades[index] = nextTrade;
   await saveTradeRecord(nextTrade);
+  
+  invalidateAnalyticsCache();
 }
 
 async function applyImagePatch(currentImageId, imagePatch) {
@@ -5042,6 +5295,7 @@ async function deleteTrade(id) {
     openInlineEditorId = null;
   }
 
+  invalidateAnalyticsCache();
   showToast("Trade deleted", "ok");
   renderAll();
 }
@@ -5080,16 +5334,20 @@ function editIconSvg() {
 async function loadImageUrls(rows) {
   const ids = [...new Set(rows.flatMap((row) => [row.before_image_id, row.after_image_id]).filter(Boolean))];
   const map = new Map();
+  const missingImageIds = []; // Track which images failed to load
 
   if (!ids.length) {
-    return map;
+    return { map, missingImageIds };
   }
 
   const blobs = await dbGetImages(ids);
-  const missingIds = ids.filter((id) => !blobs.has(id));
-  for (const imageId of missingIds) {
+  const idsToFetch = ids.filter((id) => !blobs.has(id));
+  
+  for (const imageId of idsToFetch) {
     const cloudBlob = await fetchImageFromCloud(imageId);
     if (!cloudBlob) {
+      missingImageIds.push(imageId); // Track missing image
+      incrementImageHydrationMisses(1);
       continue;
     }
     await putImageRecord(imageId, cloudBlob, { enqueue: false });
@@ -5102,7 +5360,7 @@ async function loadImageUrls(rows) {
     map.set(id, url);
   });
 
-  return map;
+  return { map, missingImageIds };
 }
 
 function releaseHistoryUrls() {
@@ -5134,7 +5392,7 @@ function renderTopInsightReel(rows) {
 }
 
 function renderAnalytics(rows) {
-  const analytics = computeAnalytics(rows);
+  const analytics = getAnalyticsCached(rows);
   const keys = TAB_INSIGHTS[activeAnalyticsTab] || [];
 
   const cards = keys
@@ -5459,6 +5717,15 @@ function renderAnalyticsVisuals(tab, analytics) {
   }
 
   const noTable = '<div class="muted-empty" style="padding:0.55rem;">No detail table for this tab.</div>';
+  const closedSample = Number(analytics.closedTrades || 0);
+  const sampleMessage = (minimum, focus) =>
+    `Need ${minimum}+ closed trades for reliable ${focus}. Currently ${closedSample}.`;
+  const placeholderCard = (title, message, span = false) => `
+    <article class="chart-card${span ? " chart-span" : ""}">
+      <h3>${escapeHtml(title)}</h3>
+      <div class="muted-empty" style="padding:0.55rem;">${escapeHtml(message)}</div>
+    </article>
+  `;
 
   if (tab === "performance") {
     visualsEl.innerHTML = `
@@ -5467,14 +5734,18 @@ function renderAnalyticsVisuals(tab, analytics) {
         <div class="chart-wrap"><canvas id="chart-outcomes"></canvas></div>
       </article>
       <article class="chart-card">
-        <h3>Net vs Gross</h3>
-        <div class="chart-wrap"><canvas id="chart-net-gross"></canvas></div>
+        <h3>Cumulative Net PnL</h3>
+        ${
+          analytics.equityCurve.length
+            ? '<div class="chart-wrap"><canvas id="chart-cumulative-pnl"></canvas></div>'
+            : '<div class="muted-empty" style="padding:0.55rem;">No closed-trade PnL data yet.</div>'
+        }
       </article>
     `;
     tablesEl.innerHTML = noTable;
 
     createChart("chart-outcomes", {
-      type: "doughnut",
+      type: "bar",
       data: {
         labels: Object.keys(analytics.outcomeCounts),
         datasets: [
@@ -5482,31 +5753,57 @@ function renderAnalyticsVisuals(tab, analytics) {
             data: Object.values(analytics.outcomeCounts),
             backgroundColor: ["#1f9d71", "#7b61ff", "#b18cff", "#d44e75", "#d6a03a"],
             borderWidth: 0,
+            borderRadius: 8,
           },
         ],
       },
       options: chartOptions(),
     });
 
-    createChart("chart-net-gross", {
-      type: "bar",
-      data: {
-        labels: ["Net", "Gross Profit", "Gross Loss"],
-        datasets: [
-          {
-            label: "USD",
-            data: [analytics.netPnl, analytics.grossProfit, -analytics.grossLossAbs],
-            backgroundColor: ["#6247e8", "#1f9d71", "#d44e75"],
-            borderRadius: 8,
-          },
-        ],
-      },
-      options: chartOptions(true),
-    });
+    if (analytics.equityCurve.length) {
+      createChart("chart-cumulative-pnl", {
+        type: "line",
+        data: {
+          labels: analytics.equityCurve.map((_, index) => String(index + 1)),
+          datasets: [
+            {
+              label: "Net PnL",
+              data: analytics.equityCurve,
+              borderColor: "#3b82f6",
+              backgroundColor: "rgba(59, 130, 246, 0.15)",
+              tension: 0.25,
+              fill: true,
+              pointRadius: 0,
+            },
+          ],
+        },
+        options: chartOptions(true),
+      });
+    }
+
+    if (closedSample < 10) {
+      tablesEl.innerHTML = `<div class="muted-empty" style="padding:0.55rem;">${escapeHtml(sampleMessage(10, "performance shape and expectancy"))}</div>`;
+    }
     return;
   }
 
   if (tab === "risk") {
+    if (closedSample < 20) {
+      visualsEl.innerHTML = placeholderCard("Risk Curves", sampleMessage(20, "risk curves"), true);
+      tablesEl.innerHTML = renderKeyValueTable(
+        "Risk Snapshot",
+        [
+          ["Closed Trades", String(analytics.closedTrades)],
+          ["Max Drawdown", formatMoney(-analytics.maxDrawdown)],
+          ["Current Drawdown", formatMoney(-analytics.currentDrawdown)],
+          ["Worst Trade", formatMoney(analytics.worstTrade)],
+          ["Max Loss Streak", String(analytics.maxLossStreak)],
+        ],
+        ["Metric", "Value"]
+      );
+      return;
+    }
+
     visualsEl.innerHTML = `
       <article class="chart-card chart-span">
         <h3>Equity and Drawdown Curves</h3>
@@ -5618,24 +5915,31 @@ function renderAnalyticsVisuals(tab, analytics) {
       options: chartOptions(),
     });
 
-    createChart("chart-compliance", {
-      type: "line",
-      data: {
-        labels: analytics.complianceTrend.labels,
-        datasets: [
-          {
-            label: "Full Confluence %",
-            data: analytics.complianceTrend.values,
-            borderColor: "#6247e8",
-            backgroundColor: "rgba(98, 71, 232, 0.12)",
-            tension: 0.3,
-            fill: true,
-            pointRadius: 3,
-          },
-        ],
-      },
-      options: chartOptions(),
-    });
+    if (closedSample >= 20) {
+      createChart("chart-compliance", {
+        type: "line",
+        data: {
+          labels: analytics.complianceTrend.labels,
+          datasets: [
+            {
+              label: "Full Confluence %",
+              data: analytics.complianceTrend.values,
+              borderColor: "#6247e8",
+              backgroundColor: "rgba(98, 71, 232, 0.12)",
+              tension: 0.3,
+              fill: true,
+              pointRadius: 3,
+            },
+          ],
+        },
+        options: chartOptions(),
+      });
+    } else {
+      const complianceWrap = document.getElementById("chart-compliance")?.parentElement;
+      if (complianceWrap) {
+        complianceWrap.innerHTML = `<div class="muted-empty" style="padding:0.55rem;">${escapeHtml(sampleMessage(20, "confluence trend analysis"))}</div>`;
+      }
+    }
     return;
   }
 
@@ -5744,8 +6048,8 @@ function renderAnalyticsVisuals(tab, analytics) {
         <div class="chart-wrap"><canvas id="chart-direction"></canvas></div>
       </article>
       <article class="chart-card chart-span">
-        <h3>Lot Size vs PnL</h3>
-        <div class="chart-wrap"><canvas id="chart-lot-scatter"></canvas></div>
+        <h3>Lot Bucket Expectancy</h3>
+        <div class="chart-wrap"><canvas id="chart-lot-buckets"></canvas></div>
       </article>
     `;
 
@@ -5814,15 +6118,16 @@ function renderAnalyticsVisuals(tab, analytics) {
       options: chartOptions(true),
     });
 
-    createChart("chart-lot-scatter", {
-      type: "scatter",
+    createChart("chart-lot-buckets", {
+      type: "bar",
       data: {
+        labels: analytics.lotBucketExpectancy.map((entry) => entry.bucket),
         datasets: [
           {
-            label: "Trades",
-            data: analytics.lotScatter,
-            pointBackgroundColor: analytics.lotScatter.map((point) => (point.y >= 0 ? "#1f9d71" : "#d44e75")),
-            pointRadius: 4,
+            label: "Expectancy",
+            data: analytics.lotBucketExpectancy.map((entry) => entry.expectancy),
+            backgroundColor: analytics.lotBucketExpectancy.map((entry) => (entry.expectancy >= 0 ? "#1f9d71" : "#d44e75")),
+            borderRadius: 8,
           },
         ],
       },
@@ -5862,7 +6167,7 @@ function renderAnalyticsVisuals(tab, analytics) {
   );
 
   createChart("chart-images", {
-    type: "doughnut",
+    type: "bar",
     data: {
       labels: ["Both", "Before only", "After only", "None"],
       datasets: [
@@ -5870,6 +6175,7 @@ function renderAnalyticsVisuals(tab, analytics) {
           data: analytics.imageBuckets,
           backgroundColor: ["#1f9d71", "#6247e8", "#b18cff", "#d44e75"],
           borderWidth: 0,
+          borderRadius: 8,
         },
       ],
     },
@@ -6390,17 +6696,21 @@ function computeAnalytics(rows) {
   });
 
   rows.forEach((trade) => {
-    if (!pairAgg[trade.pair]) {
-      pairAgg[trade.pair] = { pair: trade.pair, pnl: 0, wins: 0, closed: 0 };
+    const pair = normalizePairCode(trade.pair || "");
+    if (!pair) {
+      return;
+    }
+    if (!pairAgg[pair]) {
+      pairAgg[pair] = { pair, pnl: 0, wins: 0, closed: 0 };
     }
     if (Number.isFinite(trade.pnl)) {
-      pairAgg[trade.pair].pnl += trade.pnl;
+      pairAgg[pair].pnl += trade.pnl;
     }
     if (trade.status === "closed") {
-      pairAgg[trade.pair].closed += 1;
+      pairAgg[pair].closed += 1;
     }
     if (trade.outcome === "Full Win") {
-      pairAgg[trade.pair].wins += 1;
+      pairAgg[pair].wins += 1;
     }
   });
 
@@ -7076,7 +7386,8 @@ function normalizeTrade(trade) {
   const presentConfluences = Array.isArray(trade.present_confluences) ? trade.present_confluences : [];
   const inferred = inferConfluence(strategy, presentConfluences);
 
-  const status = trade.status || (trade.outcome ? "closed" : "open");
+  const rawStatus = String(trade.status || "").toLowerCase().trim();
+  const status = rawStatus === "open" || rawStatus === "closed" ? rawStatus : trade.outcome ? "closed" : "open";
 
   return {
     ...trade,

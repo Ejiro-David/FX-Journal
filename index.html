@@ -60,10 +60,9 @@
 
         <div class="section-head section-head-tight">
           <div class="entry-time-tools">
-            <button id="manualTimeToggle" type="button" class="btn btn-ghost btn-tiny time-toggle-btn">Set Time Manually</button>
-            <div id="entryCapturedHint" class="micro-hint">Timestamp: device time (auto)</div>
+            <div id="entryCapturedHint" class="micro-hint">Time: Auto</div>
+            <button id="manualTimeToggle" type="button" class="btn btn-ghost btn-tiny time-toggle-btn">Edit</button>
           </div>
-          <button id="reset-form" type="button" class="btn btn-ghost">Clear</button>
         </div>
 
         <form id="trade-form" novalidate>
@@ -93,16 +92,12 @@
               </select>
             </label>
             <label class="field">
-              Lot Size
-              <div class="stepper">
-                <button type="button" class="stepper-btn" id="lotDec" aria-label="Decrease lot">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                </button>
-                <input id="lotSize" name="lotSize" type="number" step="0.01" min="0.01" value="0.01" placeholder="0.01" required />
-                <button type="button" class="stepper-btn" id="lotInc" aria-label="Increase lot">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                </button>
-              </div>
+              Strategy
+              <select id="strategy" name="strategy" required>
+                <option value="">-</option>
+                <option value="ICC">ICC</option>
+                <option value="SMC">SMC</option>
+              </select>
             </label>
 
             <div class="field">
@@ -112,16 +107,9 @@
                 <label class="chip"><input type="checkbox" name="session" value="NY" /><span>NY</span></label>
                 <label class="chip"><input type="checkbox" name="session" value="Asian" /><span>Asian</span></label>
               </div>
+              <div class="micro-hint">Multi-select allowed</div>
             </div>
 
-            <label class="field">
-              Strategy
-              <select id="strategy" name="strategy" required>
-                <option value="">-</option>
-                <option value="ICC">ICC</option>
-                <option value="SMC">SMC</option>
-              </select>
-            </label>
             <label class="field">
               Outcome
               <select id="outcome" name="outcome">
@@ -136,9 +124,18 @@
               PnL ($)
               <input id="pnl" name="pnl" type="text" placeholder="+3.50 or -1.20" />
             </label>
-            <label class="field note-field">
-              Note (optional)
-              <input id="note" name="note" type="text" maxlength="240" placeholder="Any useful context to remember this trade" />
+
+            <label class="field">
+              Lot Size
+              <div class="lot-input-wrap">
+                <input id="lotSize" name="lotSize" type="number" step="0.01" min="0.01" value="0.01" placeholder="0.01" required />
+              </div>
+              <div class="lot-presets" id="lotPresetRow">
+                <button type="button" class="lot-preset" data-lot-preset="0.01">0.01</button>
+                <button type="button" class="lot-preset" data-lot-preset="0.02">0.02</button>
+                <button type="button" class="lot-preset" data-lot-preset="0.05">0.05</button>
+                <button type="button" class="lot-preset" data-lot-preset="0.10">0.10</button>
+              </div>
             </label>
           </div>
 
@@ -156,8 +153,8 @@
           </div>
 
           <div class="upload-grid">
-            <div class="field">
-              Before Screenshot
+            <div class="field" id="primaryScreenshotField">
+              Primary Screenshot (required)
               <div id="beforeZone" class="drop-zone" tabindex="0">
                 <div class="dz-text">Drop / Paste / Browse</div>
                 <input id="beforeFile" class="file-overlay" type="file" accept="image/*" />
@@ -165,8 +162,8 @@
               <img id="beforePreview" class="preview" alt="Before preview" />
               <button type="button" id="clearBefore" class="mini-btn" style="display: none">Remove</button>
             </div>
-            <div class="field">
-              After Screenshot
+            <div class="field upload-optional" id="afterScreenshotField">
+              After Screenshot (optional)
               <div id="afterZone" class="drop-zone" tabindex="0">
                 <div class="dz-text">Drop / Paste / Browse</div>
                 <input id="afterFile" class="file-overlay" type="file" accept="image/*" />
@@ -176,9 +173,15 @@
             </div>
           </div>
 
+          <label class="field note-field">
+            Note (optional)
+            <input id="note" name="note" type="text" maxlength="240" placeholder="Any useful context to remember this trade" />
+          </label>
+
           <p id="form-error" class="error" role="alert"></p>
 
-          <div class="action-row">
+          <div class="action-row action-row-sticky">
+            <button id="reset-form" type="button" class="btn btn-ghost">Clear</button>
             <button type="submit" id="saveBtn" class="btn btn-primary">Log Trade</button>
           </div>
         </form>
@@ -281,13 +284,14 @@
           <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
         </summary>
 
-        <article class="confluence-card settings-rules-card sync-card">
+        <article id="settingsSyncCard" class="confluence-card settings-rules-card sync-card">
           <div class="section-head section-head-tight">
-            <h3>Cloud Sync</h3>
+            <h3>Account & Sync</h3>
           </div>
           <div class="sync-status-block">
             <div id="syncStatusPill" class="sync-pill is-offline">Offline</div>
             <div id="syncQueueHint" class="sync-human-hint">Your data is safe locally. 0 changes waiting to sync.</div>
+            <div id="syncLastSync" class="micro-hint">Last sync: never</div>
           </div>
 
           <div class="settings-grid sync-grid">
@@ -307,7 +311,11 @@
           </div>
         </article>
 
-        <div class="settings-grid">
+        <article class="confluence-card settings-rules-card">
+          <div class="section-head section-head-tight">
+            <h3>Journal Preferences</h3>
+          </div>
+        <div class="settings-grid settings-grid-compact">
           <label class="field settings-switch">
             Insight Reel
             <span class="settings-switch-row">
@@ -316,12 +324,13 @@
             </span>
           </label>
           <label class="field">
-            Strategy Mode
+            Enabled Strategies
             <select id="settingStrategyMode">
               <option value="all">All strategies</option>
             </select>
           </label>
         </div>
+        </article>
 
         <article class="confluence-card settings-rules-card">
           <div class="section-head section-head-tight">
@@ -339,9 +348,10 @@
 
         <article class="confluence-card settings-rules-card">
           <div class="section-head section-head-tight">
-            <h3>Confluence Map</h3>
+            <h3>Strategy Rules</h3>
             <div class="settings-actions">
               <button id="settingsResetRules" type="button" class="btn btn-ghost btn-tiny">Reset Defaults</button>
+              <button id="settingsDuplicateStrategy" type="button" class="btn btn-ghost btn-tiny">Duplicate Strategy</button>
               <button id="settingsSaveRules" type="button" class="btn btn-primary btn-tiny">Save Rules</button>
             </div>
           </div>
@@ -354,8 +364,15 @@
           </div>
 
           <div id="settingsRuleEditor" class="settings-rule-editor"></div>
+
+          <div class="settings-rule-protect">
+            <label class="settings-switch-row">
+              <input id="settingsRulesNewOnly" type="checkbox" checked />
+              <span>Apply changes to new trades only (keep historical analytics frozen)</span>
+            </label>
+          </div>
           <div class="micro-hint">
-            Required confluences define setup validity. Quality confluences upgrade setup quality.
+            Core = missing makes setup invalid. Backing = context/support layer. Quality = improves entry quality.
           </div>
         </article>
       </details>
