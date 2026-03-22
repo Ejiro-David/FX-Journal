@@ -70,7 +70,7 @@ test('V4 smoke flow works end-to-end', async ({ page }) => {
   await page.selectOption('#pair', 'EURUSD');
   await page.selectOption('#direction', 'Buy');
   await page.fill('#lotSize', '0.010');
-  await page.check('input[name="session"][value="London"]');
+  await page.locator('#sessionChips .chip', { hasText: 'London' }).click();
   await page.selectOption('#strategy', 'ICC');
 
   await page.waitForSelector('input[name="createConfluence"]');
@@ -82,19 +82,23 @@ test('V4 smoke flow works end-to-end', async ({ page }) => {
   await expect(page.locator('#toast')).toContainText(/trade saved/i);
 
   await page.click('#history-card > .summary');
+  await page.click('#historyTabOpen');
   await expect(page.locator('.group-title.open')).toContainText(/open trades/i);
 
   await page.click('#viewList');
-  await page.locator('[data-edit-id]').first().click();
-  await page.waitForSelector('.inline-editor-row');
-  await page.selectOption('.inline-editor-row .inline-outcome', 'Full Win');
-  await page.fill('.inline-editor-row .inline-pnl', '12.50');
-  await page.click('.inline-editor-row button[type="submit"]');
+  await page.locator('.trade-row[role="button"]').first().click();
+  await page.waitForSelector('#trade-detail-modal', { state: 'visible' });
+  await page.selectOption('#detailCloseOutcome', 'Full Win');
+  await page.fill('#detailClosePnl', '12.50');
+  await page.setInputFiles('#detailCloseAfterFile', TEST_IMAGE);
+  await page.click('#detailCloseBtn');
 
+  await expect(page.locator('#trade-detail-modal')).toContainText(/status/i);
+  await expect(page.locator('#trade-detail-modal')).toContainText(/closed/i);
+  await page.click('#detail-modal-close');
+  await page.waitForSelector('#trade-detail-modal', { state: 'hidden' });
+  await page.click('#historyTabClosed');
   await expect(page.locator('.group-title')).toContainText(/closed trades/i);
-
-  await page.locator('[data-edit-id]').first().click();
-  await expect(page.locator('.inline-editor-row [data-inline-delete]')).toContainText(/hold 3s/i);
 
   await page.click('#analytics-card > .summary');
   for (const tab of ['performance', 'risk', 'confluence', 'sessions', 'market', 'behavior']) {

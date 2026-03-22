@@ -1526,6 +1526,7 @@ function formatStrategyWinLine(analytics, limit = 3) {
 }
 
 const form = document.getElementById("trade-form");
+const entryCard = document.getElementById("entry-card");
 const resetBtn = document.getElementById("reset-form");
 const saveBtn = document.getElementById("saveBtn");
 const errorEl = document.getElementById("form-error");
@@ -1536,8 +1537,7 @@ const manualTimeToggleEl = document.getElementById("manualTimeToggle");
 const manualTimeFieldsEl = document.getElementById("manualTimeFields");
 const entryCapturedHintEl = document.getElementById("entryCapturedHint");
 
-const tradeDateEl = document.getElementById("tradeDate");
-const tradeTimeEl = document.getElementById("tradeTime");
+const tradeDateTimeEl = document.getElementById("tradeDateTime");
 const pairEl = document.getElementById("pair");
 const directionEl = document.getElementById("direction");
 const lotSizeEl = document.getElementById("lotSize");
@@ -1569,10 +1569,13 @@ const topInsightPanelEl = document.getElementById("topInsightPanel");
 const spotlightCardEl = document.getElementById("spotlight-card");
 
 const filterPairEl = document.getElementById("filterPair");
+const filterDirectionEl = document.getElementById("filterDirection");
 const filterSessionEl = document.getElementById("filterSession");
 const filterOutcomeEl = document.getElementById("filterOutcome");
 const filterStrategyEl = document.getElementById("filterStrategy");
 const filterIntegrityEl = document.getElementById("filterIntegrity");
+const filterGradeEl = document.getElementById("filterGrade");
+const filterScreenshotsEl = document.getElementById("filterScreenshots");
 const historyStatusTabsEl = document.getElementById("historyStatusTabs");
 const historyTabClosedEl = document.getElementById("historyTabClosed");
 const historyTabOpenEl = document.getElementById("historyTabOpen");
@@ -1631,8 +1634,7 @@ const deleteTradeBtn = document.getElementById("delete-trade");
 const editIdEl = document.getElementById("editId");
 const editManualTimeToggleEl = document.getElementById("editManualTimeToggle");
 const editManualTimeFieldsEl = document.getElementById("editManualTimeFields");
-const editDateEl = document.getElementById("editDate");
-const editTimeEl = document.getElementById("editTime");
+const editDateTimeEl = document.getElementById("editDateTime");
 const editPairEl = document.getElementById("editPair");
 const editDirectionEl = document.getElementById("editDirection");
 const editLotSizeEl = document.getElementById("editLotSize");
@@ -1658,6 +1660,7 @@ const tradeDetailModalEl = document.getElementById("trade-detail-modal");
 const detailModalBodyEl = document.getElementById("detailModalBody");
 const detailModalCloseBtn = document.getElementById("detail-modal-close");
 const detailEditBtn = document.getElementById("detailEditBtn");
+const detailCloseBtn = document.getElementById("detailCloseBtn");
 
 const toast = createToastController(toastEl);
 const storage = createIdbStorage({
@@ -1735,11 +1738,14 @@ function getAnalyticsCacheKey(rows) {
   const count = (Array.isArray(rows) ? rows.length : 0);
   const lastId = rows?.length ? rows[rows.length - 1]?.id : "";
   const pair = filterPairEl?.value || "";
+  const direction = filterDirectionEl?.value || "";
   const session = filterSessionEl?.value || "";
   const outcome = filterOutcomeEl?.value || "";
   const strategy = filterStrategyEl?.value || "";
   const integrity = filterIntegrityEl?.value || "";
-  return `${count}:${lastId}:${pair}:${session}:${outcome}:${strategy}:${integrity}`;
+  const grade = filterGradeEl?.value || "";
+  const screenshots = filterScreenshotsEl?.value || "";
+  return `${count}:${lastId}:${pair}:${direction}:${session}:${outcome}:${strategy}:${integrity}:${grade}:${screenshots}`;
 }
 
 function getAnalyticsCached(rows) {
@@ -1790,6 +1796,15 @@ async function init() {
 
   analyticsCard.open = false;
   historyCard.open = false;
+  if (entryCard) {
+    entryCard.open = false;
+  }
+  if (editModal) {
+    editModal.style.display = "none";
+  }
+  if (tradeDetailModalEl) {
+    tradeDetailModalEl.style.display = "none";
+  }
 
   bindDropZones();
   bindEvents();
@@ -2061,7 +2076,10 @@ function bindEvents() {
   form.addEventListener("input", syncEntryFlowState);
   form.addEventListener("change", syncEntryFlowState);
 
-  [filterPairEl, filterSessionEl, filterOutcomeEl, filterStrategyEl, filterIntegrityEl].forEach((el) => {
+  [filterPairEl, filterDirectionEl, filterSessionEl, filterOutcomeEl, filterStrategyEl, filterIntegrityEl, filterGradeEl, filterScreenshotsEl].forEach((el) => {
+    if (!el) {
+      return;
+    }
     el.addEventListener("change", () => {
       openInlineEditorId = null;
       updateHistoryFilterMeta();
@@ -2070,20 +2088,29 @@ function bindEvents() {
   });
 
   if (historyFilterToggleEl && historyFilterPanelEl) {
+    const syncFilterPanelUi = () => {
+      const visible = !historyFilterPanelEl.hidden;
+      historyFilterToggleEl.textContent = visible ? "Hide Filters" : "Filter";
+      historyFilterToggleEl.setAttribute("aria-expanded", String(visible));
+    };
+
+    syncFilterPanelUi();
     historyFilterToggleEl.addEventListener("click", () => {
-      const nextHidden = !historyFilterPanelEl.hidden;
-      historyFilterPanelEl.hidden = nextHidden;
-      historyFilterToggleEl.textContent = nextHidden ? "Filter" : "Hide Filters";
+      historyFilterPanelEl.hidden = !historyFilterPanelEl.hidden;
+      syncFilterPanelUi();
     });
   }
 
   if (historyClearFiltersEl) {
     historyClearFiltersEl.addEventListener("click", () => {
       filterPairEl.value = "";
+      filterDirectionEl.value = "";
       filterSessionEl.value = "";
       filterOutcomeEl.value = "";
       filterStrategyEl.value = "";
       filterIntegrityEl.value = "";
+      filterGradeEl.value = "";
+      filterScreenshotsEl.value = "";
       openInlineEditorId = null;
       updateHistoryFilterMeta();
       renderFilteredSections();
@@ -2190,6 +2217,72 @@ function bindEvents() {
       }
       closeDetailModal();
       await openEditModal(id);
+    });
+  }
+  if (detailCloseBtn) {
+    detailCloseBtn.addEventListener("click", async () => {
+      const id = activeDetailTradeId;
+      if (!id) {
+        return;
+      }
+      const trade = trades.find((item) => item.id === id);
+      if (!trade) {
+        return;
+      }
+      if (trade.status === "closed") {
+        showToast("Trade is already closed", "ok");
+        return;
+      }
+
+      const outcomeEl = detailModalBodyEl?.querySelector("#detailCloseOutcome");
+      const pnlEl = detailModalBodyEl?.querySelector("#detailClosePnl");
+      const afterFileEl = detailModalBodyEl?.querySelector("#detailCloseAfterFile");
+
+      const outcome = String(outcomeEl?.value || "");
+      const pnl = parsePnl(pnlEl?.value || "");
+      const pnlError = validatePnlInput(pnlEl?.value || "");
+      if (!outcome) {
+        showToast("Select outcome to close trade", "bad");
+        return;
+      }
+      if (pnlError || pnl == null) {
+        showToast("Enter valid PnL to close trade", "bad");
+        return;
+      }
+
+      const selectedFile = afterFileEl?.files?.[0] || null;
+      if (!trade.after_image_id && !selectedFile) {
+        showToast("After screenshot is required when closing", "bad");
+        return;
+      }
+
+      let afterNewBlob = null;
+      if (selectedFile) {
+        afterNewBlob = await compressImage(selectedFile);
+      }
+
+      await updateTrade(trade.id, {
+        pair: trade.pair,
+        direction: trade.direction,
+        lot_size: normalizeLotSizeValue(trade.lot_size),
+        sessions: trade.sessions || [],
+        strategy: trade.strategy,
+        smc_entry_types: trade.smc_entry_types || [],
+        present_confluences: trade.present_confluences || [],
+        outcome,
+        pnl,
+        note: trade.note || "",
+        captured_at_utc: trade.captured_at_utc,
+        timezone_offset_min: Number.isFinite(trade.timezone_offset_min) ? trade.timezone_offset_min : new Date().getTimezoneOffset(),
+        imagePatch: {
+          before: null,
+          after: afterNewBlob ? { remove: false, newBlob: afterNewBlob } : null,
+        },
+      });
+
+      renderAll();
+      await openTradeDetailModal(trade.id);
+      showToast("Trade closed", "ok");
     });
   }
 
@@ -2685,14 +2778,7 @@ function handlePairSelectChange(selectEl) {
 }
 
 function fillTimeSuggestions() {
-  const list = document.getElementById("time-suggestions");
-  const options = [];
-  for (let hour = 0; hour < 24; hour += 1) {
-    for (let minute = 0; minute < 60; minute += 15) {
-      options.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`);
-    }
-  }
-  list.innerHTML = options.map((value) => `<option value="${value}"></option>`).join("");
+  // Legacy no-op after switching to datetime-local inputs.
 }
 
 function toggleEntryManualTime() {
@@ -2700,7 +2786,7 @@ function toggleEntryManualTime() {
   manualTimeFieldsEl.style.display = entryManualTimeEnabled ? "grid" : "none";
   manualTimeToggleEl.textContent = entryManualTimeEnabled ? "Auto" : "Edit";
   entryCapturedHintEl.textContent = entryManualTimeEnabled ? "Time: Manual override" : "Time: Auto";
-  if (entryManualTimeEnabled && !tradeDateEl.value) {
+  if (entryManualTimeEnabled && tradeDateTimeEl && !tradeDateTimeEl.value) {
     applyDefaultDateTime();
   }
 }
@@ -2713,8 +2799,9 @@ function toggleEditManualTime() {
 
 function applyDefaultDateTime() {
   const now = new Date();
-  tradeDateEl.value = toDateInputValue(now);
-  tradeTimeEl.value = toTimeInputValue(now);
+  if (tradeDateTimeEl) {
+    tradeDateTimeEl.value = toDateTimeLocalInputValue(now);
+  }
 }
 
 function applySavedDefaults() {
@@ -2889,8 +2976,9 @@ function loadDefaults() {
 
 function createDefaultSettings() {
   return {
-    showInsightReel: false,
+    showInsightReel: true,
     strategyMode: "all",
+    buttonStyle: "tech-a",
     sessionOptions: [...DEFAULT_SESSION_OPTIONS],
     ruleChangeMode: "new_only",
     confluenceRules: cloneConfluenceRules(CONFLUENCE_RULES),
@@ -3126,6 +3214,7 @@ function normalizeSettings(rawSettings) {
   return {
     showInsightReel: rawSettings.showInsightReel !== false,
     strategyMode,
+    buttonStyle: rawSettings.buttonStyle === "tech-b" ? "tech-b" : "tech-a",
     sessionOptions,
     ruleChangeMode: rawSettings.ruleChangeMode === "recompute_all" ? "recompute_all" : "new_only",
     confluenceRules,
@@ -3166,6 +3255,7 @@ function saveAppSettings(options = {}) {
 function applySettingsUi(options = {}) {
   const { rerender = true } = options;
   applyInsightReelVisibility();
+  applyButtonStyle();
   refreshStrategySelectors();
   refreshSessionSelectors();
   renderSettingsPanel();
@@ -3183,6 +3273,11 @@ function applyInsightReelVisibility() {
     return;
   }
   spotlightCardEl.style.display = appSettings.showInsightReel ? "" : "none";
+}
+
+function applyButtonStyle() {
+  const styleKey = appSettings.buttonStyle === "tech-b" ? "tech-b" : "tech-a";
+  document.documentElement.setAttribute("data-button-style", styleKey);
 }
 
 function isSingleStrategyMode() {
@@ -4083,13 +4178,24 @@ async function handleCreateSubmit(event) {
       return;
     }
 
+    if (pnl != null && !outcomeEl.value) {
+      failInline("Select outcome when PnL is entered.");
+      return;
+    }
+
+    const isClosingTrade = Boolean(outcomeEl.value) || pnl != null;
+    if (isClosingTrade && !createImages.afterBlob) {
+      failInline("After screenshot is required when closing a trade.");
+      return;
+    }
+
     let capturedAt = new Date();
     if (entryManualTimeEnabled) {
-      if (!tradeDateEl.value || !tradeTimeEl.value) {
-        failInline("Manual time needs both date and time.");
+      if (!tradeDateTimeEl?.value) {
+        failInline("Manual time needs date and time.");
         return;
       }
-      capturedAt = combineDateTime(tradeDateEl.value, tradeTimeEl.value);
+      capturedAt = new Date(tradeDateTimeEl.value);
       if (Number.isNaN(capturedAt.getTime())) {
         failInline("Invalid manual date/time.");
         return;
@@ -4210,7 +4316,7 @@ function setHistoryStatusTab(status) {
 }
 
 function getActiveFilterCount() {
-  return [filterPairEl, filterSessionEl, filterOutcomeEl, filterStrategyEl, filterIntegrityEl].reduce(
+  return [filterPairEl, filterDirectionEl, filterSessionEl, filterOutcomeEl, filterStrategyEl, filterIntegrityEl, filterGradeEl, filterScreenshotsEl].reduce(
     (count, el) => count + (el && el.value ? 1 : 0),
     0
   );
@@ -4228,6 +4334,7 @@ function getFilteredTrades() {
   return trades.filter((trade) => {
     const statusOk = historyStatusTab === "all" || trade.status === historyStatusTab;
     const pairOk = !filterPairEl.value || trade.pair === filterPairEl.value;
+    const directionOk = !filterDirectionEl.value || trade.direction === filterDirectionEl.value;
     const sessionOk = !filterSessionEl.value || (trade.sessions || []).includes(filterSessionEl.value);
     const outcomeOk =
       !filterOutcomeEl.value ||
@@ -4235,14 +4342,26 @@ function getFilteredTrades() {
     const strategyOk = !filterStrategyEl.value || trade.strategy === filterStrategyEl.value;
     const adherenceValue = trade.model_adherence || "Bad";
     const integrityOk = !filterIntegrityEl.value || adherenceValue === filterIntegrityEl.value;
+    const gradeOk = !filterGradeEl.value || String(trade.setup_grade || "").toUpperCase() === filterGradeEl.value;
 
-    return statusOk && pairOk && sessionOk && outcomeOk && strategyOk && integrityOk;
+    const screenshotState = filterScreenshotsEl.value;
+    const hasBefore = Boolean(trade.before_image_id);
+    const hasAfter = Boolean(trade.after_image_id);
+    const screenshotOk =
+      !screenshotState ||
+      (screenshotState === "both" && hasBefore && hasAfter) ||
+      (screenshotState === "before_only" && hasBefore && !hasAfter) ||
+      (screenshotState === "after_only" && !hasBefore && hasAfter) ||
+      (screenshotState === "missing_after" && !hasAfter);
+
+    return statusOk && pairOk && directionOk && sessionOk && outcomeOk && strategyOk && integrityOk && gradeOk && screenshotOk;
   });
 }
 
 function getAnalyticsTrades() {
   return trades.filter((trade) => {
     const pairOk = !filterPairEl.value || trade.pair === filterPairEl.value;
+    const directionOk = !filterDirectionEl.value || trade.direction === filterDirectionEl.value;
     const sessionOk = !filterSessionEl.value || (trade.sessions || []).includes(filterSessionEl.value);
     const outcomeOk =
       !filterOutcomeEl.value ||
@@ -4250,9 +4369,20 @@ function getAnalyticsTrades() {
     const strategyOk = !filterStrategyEl.value || trade.strategy === filterStrategyEl.value;
     const adherenceValue = trade.model_adherence || "Bad";
     const integrityOk = !filterIntegrityEl.value || adherenceValue === filterIntegrityEl.value;
+    const gradeOk = !filterGradeEl.value || String(trade.setup_grade || "").toUpperCase() === filterGradeEl.value;
+
+    const screenshotState = filterScreenshotsEl.value;
+    const hasBefore = Boolean(trade.before_image_id);
+    const hasAfter = Boolean(trade.after_image_id);
+    const screenshotOk =
+      !screenshotState ||
+      (screenshotState === "both" && hasBefore && hasAfter) ||
+      (screenshotState === "before_only" && hasBefore && !hasAfter) ||
+      (screenshotState === "after_only" && !hasBefore && hasAfter) ||
+      (screenshotState === "missing_after" && !hasAfter);
 
     // Keep Edge Review independent from history status tabs so KPIs remain globally accurate.
-    return pairOk && sessionOk && outcomeOk && strategyOk && integrityOk;
+    return pairOk && directionOk && sessionOk && outcomeOk && strategyOk && integrityOk && gradeOk && screenshotOk;
   });
 }
 
@@ -4281,8 +4411,14 @@ async function renderHistory(rows) {
 
   try {
     const ordered = sortTradesForDisplay(rows);
-    const openRows = ordered.filter((trade) => trade.status === "open");
-    const closedRows = ordered.filter((trade) => trade.status !== "open");
+    let openRows = ordered.filter((trade) => trade.status === "open");
+    let closedRows = ordered.filter((trade) => trade.status !== "open");
+
+    if (historyStatusTab === "open") {
+      closedRows = [];
+    } else if (historyStatusTab === "closed") {
+      openRows = [];
+    }
 
     if (historyViewMode === "list") {
       releaseHistoryUrls();
@@ -4660,6 +4796,11 @@ async function handleInlineSubmit(formEl, existingTrade) {
     return;
   }
 
+  if (pnl != null && !outcome) {
+    showToast("Inline edit: outcome required with PnL", "bad");
+    return;
+  }
+
   if (!presentConfluences.length) {
     showToast("Inline edit: setup checklist required", "bad");
     return;
@@ -4700,6 +4841,13 @@ async function handleInlineSubmit(formEl, existingTrade) {
   const finalAfter = removeAfter && !afterBlob ? null : existingTrade.after_image_id;
   if (!finalBefore && !finalAfter && !beforeBlob && !afterBlob) {
     showToast("At least one screenshot is required", "bad");
+    return;
+  }
+
+  const isClosingTrade = Boolean(outcome) || pnl != null;
+  const finalAfterPresent = Boolean(finalAfter || afterBlob);
+  if (isClosingTrade && !finalAfterPresent) {
+    showToast("Inline edit: after screenshot required when closing", "bad");
     return;
   }
 
@@ -4896,7 +5044,33 @@ async function openTradeDetailModal(id) {
         ${renderDetailListHtml(trade.missing_quality)}
       </div>
     </div>
+    ${trade.status === "open" ? `
+    <div class="detail-close-panel">
+      <div class="detail-close-title">Close This Trade</div>
+      <div class="detail-close-grid">
+        <label class="field">Outcome
+          <select id="detailCloseOutcome">
+            <option value="">Select outcome</option>
+            <option value="Full Win">Full Win</option>
+            <option value="Partial + BE">Partial + BE</option>
+            <option value="Breakeven">Breakeven</option>
+            <option value="Full Loss">Full Loss</option>
+          </select>
+        </label>
+        <label class="field">PnL
+          <input id="detailClosePnl" type="text" placeholder="+3.50 or -1.20" />
+        </label>
+        <label class="field">After Screenshot (required)
+          <input id="detailCloseAfterFile" type="file" accept="image/*" />
+        </label>
+      </div>
+      <div class="micro-hint">Closing requires outcome, PnL, and after screenshot.</div>
+    </div>` : ""}
   `;
+
+  if (detailCloseBtn) {
+    detailCloseBtn.style.display = trade.status === "open" ? "" : "none";
+  }
 
   tradeDetailModalEl.style.display = "grid";
 }
@@ -4983,8 +5157,9 @@ async function openEditModal(id) {
   }
 
   const capturedDate = trade.captured_at_utc ? new Date(trade.captured_at_utc) : new Date();
-  editDateEl.value = toDateInputValue(capturedDate);
-  editTimeEl.value = toTimeInputValue(capturedDate);
+  if (editDateTimeEl) {
+    editDateTimeEl.value = toDateTimeLocalInputValue(capturedDate);
+  }
 
   syncEditSessions(trade.sessions || []);
   renderEditConfluenceChecklist(trade.present_confluences || []);
@@ -5054,6 +5229,12 @@ async function handleEditSubmit(event) {
     return;
   }
 
+  if (pnl != null && !editOutcomeEl.value) {
+    editErrorEl.textContent = "Select outcome when PnL is entered.";
+    showToast("Outcome is required with PnL", "bad");
+    return;
+  }
+
   const presentConfluences = getCheckedValues(editForm, "editConfluence");
   if (!presentConfluences.length) {
     editErrorEl.textContent = "Tick at least one setup checklist item.";
@@ -5063,12 +5244,12 @@ async function handleEditSubmit(event) {
 
   let capturedAtUtc = trade.captured_at_utc;
   if (editManualTimeEnabled) {
-    if (!editDateEl.value || !editTimeEl.value) {
+    if (!editDateTimeEl?.value) {
       editErrorEl.textContent = "Manual time requires date and time.";
       showToast("Manual date/time missing", "bad");
       return;
     }
-    const parsed = combineDateTime(editDateEl.value, editTimeEl.value);
+    const parsed = new Date(editDateTimeEl.value);
     if (Number.isNaN(parsed.getTime())) {
       editErrorEl.textContent = "Invalid manual date/time.";
       showToast("Invalid manual date/time", "bad");
@@ -5082,6 +5263,13 @@ async function handleEditSubmit(event) {
   if (!beforeStillPresent && !afterStillPresent) {
     editErrorEl.textContent = "At least one screenshot is required.";
     showToast("At least one screenshot required", "bad");
+    return;
+  }
+
+  const isClosingTrade = Boolean(editOutcomeEl.value) || pnl != null;
+  if (isClosingTrade && !afterStillPresent) {
+    editErrorEl.textContent = "After screenshot is required when closing a trade.";
+    showToast("After screenshot required", "bad");
     return;
   }
 
@@ -5380,7 +5568,7 @@ function renderTopInsightReel(rows) {
     return;
   }
 
-  const analytics = computeAnalytics(rows);
+  const analytics = getAnalyticsCached(rows);
   const slides = buildTopInsightSlides(analytics);
   topInsightPanelEl.innerHTML = renderInsightOrbitCarousel(slides, "topInsightCarousel");
 
@@ -5421,19 +5609,19 @@ function buildTopInsightSlides(analytics) {
   const deck = buildInsightDeck(analytics);
 
   const fSlide = {
-    kicker: "Risk Discipline",
-    title: "Grade F Damage Tracker",
-    text: `Top missing required confluence: ${analytics.topMissingRequiredConfluenceFMonth || "None"}`,
+    kicker: "Private Journal Pulse",
+    title: "Rule-Break Impact",
+    text: `Top missing core this month: ${analytics.topMissingRequiredConfluenceFMonth || "None"}`,
     metrics: [
-      ["F Trades (Month)", String(analytics.fTradesThisMonth)],
-      ["Net PnL from F", formatMoney(analytics.fNetPnlThisMonth)],
-      ["% Loss from F", `${analytics.fLossContributionPct.toFixed(1)}%`],
+      ["Grade F (Month)", String(analytics.fTradesThisMonth)],
+      ["Net from F", formatMoney(analytics.fNetPnlThisMonth)],
+      ["Loss Share", `${analytics.fLossContributionPct.toFixed(1)}%`],
     ],
   };
 
   const pulseSlide = {
-    kicker: "Performance Snapshot",
-    title: "Month Pulse",
+    kicker: "Setup Discipline",
+    title: "This Month Snapshot",
     text: `Net ${formatMoney(analytics.netPnlThisMonth)} from ${analytics.closedTradesThisMonth} closed trades this month.`,
     metrics: [
       ["Net (Month)", formatMoney(analytics.netPnlThisMonth)],
@@ -7231,6 +7419,12 @@ function toTimeInputValue(dateInput) {
   const date = new Date(dateInput);
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
   return date.toISOString().slice(11, 16);
+}
+
+function toDateTimeLocalInputValue(dateInput) {
+  const date = new Date(dateInput);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 16);
 }
 
 function pairOptionsHtml(selected, includeBlank, includeAddAction = true) {

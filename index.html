@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Trade Journal</title>
+    <title>Private trade Journal</title>
     <meta
       name="description"
       content="Private forex trade journal with confluence grading, screenshot evidence, and deep analytics."
     />
     <meta name="theme-color" content="#0b0e11" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Trade Journal" />
+    <meta property="og:title" content="Private trade Journal" />
     <meta
       property="og:description"
       content="Private forex trade journal with confluence grading, screenshot evidence, and deep analytics."
@@ -20,7 +20,7 @@
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Trade Journal" />
+    <meta name="twitter:title" content="Private trade Journal" />
     <meta
       name="twitter:description"
       content="Private forex trade journal with confluence grading, screenshot evidence, and deep analytics."
@@ -44,13 +44,12 @@
       <header class="hero">
         <div class="hero-brand">
           <div>
-          <div class="hero-kicker">Private Trade Journal</div>
-          <h1>Trade Journal</h1>
+          <h1>Private trade Journal</h1>
           </div>
         </div>
       </header>
 
-      <details class="card form-card" id="entry-card" open>
+      <details class="card form-card" id="entry-card">
         <summary class="summary">
           <span class="summary-title-wrap">
             <span class="summary-title">Log Trade</span>
@@ -68,13 +67,8 @@
         <form id="trade-form" novalidate>
           <div id="manualTimeFields" class="manual-time-fields" style="display: none">
             <label class="field">
-              Date
-              <input id="tradeDate" name="tradeDate" type="date" />
-            </label>
-            <label class="field">
-              Time
-              <input id="tradeTime" name="tradeTime" type="time" list="time-suggestions" />
-              <datalist id="time-suggestions"></datalist>
+              Date & Time
+              <input id="tradeDateTime" name="tradeDateTime" type="datetime-local" />
             </label>
           </div>
 
@@ -127,8 +121,10 @@
 
             <label class="field">
               Lot Size
-              <div class="lot-input-wrap">
+              <div class="stepper lot-stepper">
+                <button type="button" class="stepper-btn" id="lotDec" aria-label="Decrease lot">-</button>
                 <input id="lotSize" name="lotSize" type="number" step="0.01" min="0.01" value="0.01" placeholder="0.01" required />
+                <button type="button" class="stepper-btn" id="lotInc" aria-label="Increase lot">+</button>
               </div>
               <div class="lot-presets" id="lotPresetRow">
                 <button type="button" class="lot-preset" data-lot-preset="0.01">0.01</button>
@@ -242,6 +238,11 @@
           <div id="historyFilterPanel" class="history-filter-panel" hidden>
             <div class="filter-pills">
               <select id="filterPair" class="filter-pill"><option value="">All Pairs</option></select>
+              <select id="filterDirection" class="filter-pill">
+                <option value="">All Directions</option>
+                <option value="Buy">Buy</option>
+                <option value="Sell">Sell</option>
+              </select>
               <select id="filterSession" class="filter-pill">
                 <option value="">All Sessions</option>
                 <option value="London">London</option>
@@ -267,6 +268,21 @@
                 <option value="High">High</option>
                 <option value="Reduced">Reduced</option>
                 <option value="Bad">Bad</option>
+              </select>
+              <select id="filterGrade" class="filter-pill">
+                <option value="">All Grades</option>
+                <option value="A+">A+</option>
+                <option value="A">A</option>
+                <option value="B">B</option>
+                <option value="C">C</option>
+                <option value="F">F</option>
+              </select>
+              <select id="filterScreenshots" class="filter-pill">
+                <option value="">All Screenshots</option>
+                <option value="both">Both Images</option>
+                <option value="before_only">Before Only</option>
+                <option value="after_only">After Only</option>
+                <option value="missing_after">Missing After</option>
               </select>
             </div>
             <div class="toolbar-row">
@@ -377,7 +393,7 @@
         </article>
       </details>
 
-      <footer class="app-footer">by teerex</footer>
+      <footer class="app-footer">built by teerex 🦖</footer>
     </main>
 
     <div id="toast" class="toast" aria-live="polite"></div>
@@ -391,6 +407,7 @@
         <div id="detailModalBody" class="detail-body"></div>
         <div class="action-row">
           <button id="detailEditBtn" type="button" class="btn btn-primary">Edit Trade</button>
+          <button id="detailCloseBtn" type="button" class="btn btn-ghost">Close Trade</button>
         </div>
       </div>
     </div>
@@ -469,8 +486,7 @@
                 <button id="editManualTimeToggle" type="button" class="btn btn-ghost btn-tiny time-toggle-btn">Set Time Manually</button>
               </div>
               <div id="editManualTimeFields" class="manual-time-fields" style="display: none">
-                <label class="field">Date<input id="editDate" type="date" /></label>
-                <label class="field">Time<input id="editTime" type="time" /></label>
+                <label class="field">Date & Time<input id="editDateTime" type="datetime-local" /></label>
               </div>
               <div id="editConfluenceChecklist" class="confluence-grid"></div>
               <div id="editSmcEntryTypesWrap" class="confluence-block smc-entry-wrap" hidden>
