@@ -4240,10 +4240,24 @@ function getStrategyConfig(strategy) {
   const configuredRules = appSettings?.confluenceRules?.[normalized];
   if (configuredRules) {
     const fallback = STRATEGY_CONFIG[normalized] || { entryTypes: [] };
+    const pickSection = (sectionName) => {
+      const configured = Array.isArray(configuredRules[sectionName]) ? [...configuredRules[sectionName]] : null;
+      const fallbackSection = Array.isArray(fallback[sectionName]) ? [...fallback[sectionName]] : [];
+
+      // Recover known defaults when older/broken settings persisted empty arrays.
+      if (configured && configured.length > 0) {
+        return configured;
+      }
+      if (fallbackSection.length > 0) {
+        return fallbackSection;
+      }
+      return configured || [];
+    };
+
     return {
-      core: Array.isArray(configuredRules.core) ? [...configuredRules.core] : [],
-      backing: Array.isArray(configuredRules.backing) ? [...configuredRules.backing] : [],
-      quality: Array.isArray(configuredRules.quality) ? [...configuredRules.quality] : [],
+      core: pickSection("core"),
+      backing: pickSection("backing"),
+      quality: pickSection("quality"),
       entryTypes: Array.isArray(fallback.entryTypes) ? [...fallback.entryTypes] : [],
     };
   }
