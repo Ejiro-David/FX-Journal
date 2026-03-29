@@ -221,6 +221,7 @@ const refs = {
   detailBody: document.getElementById("detailBody"),
   closeDetailBtn: document.getElementById("closeDetailBtn"),
   editFromDetailBtn: document.getElementById("editFromDetailBtn"),
+  deleteTradeBtn: document.getElementById("deleteTradeBtn"),
   lightbox: document.getElementById("lightbox"),
   lightboxImage: document.getElementById("lightboxImage"),
   lightboxClose: document.getElementById("lightboxClose"),
@@ -852,10 +853,10 @@ async function saveTradeForm() {
   await dbApi.putTrade(trade);
   await syncTradeToCloud(trade);
 
-  showToast(existing ? "Trade updated" : "Trade saved");
+  showToast(`${existing ? "Updated" : "Saved"} ${trade.trade_id} · @ ${formatPrice(entryPrice)}`);
   resetTradeForm();
   renderAll();
-  setActiveScreen("log");
+  setActiveScreen("history");
 }
 
 function resetTradeForm() {
@@ -898,8 +899,12 @@ function bindDetailAndLightbox() {
     refs.tradeDetailModal.hidden = true;
     const trade = state.trades.find((row) => row.id === state.lightboxSourceTradeId);
     if (trade) {
-      openTradeForEdit(trade);
+      void openTradeForEdit(trade);
     }
+  });
+
+  refs.deleteTradeBtn.addEventListener("click", () => {
+    void deleteTradeFromDetail();
   });
 
   refs.lightboxClose.addEventListener("click", () => {
@@ -926,7 +931,7 @@ function bindDetailAndLightbox() {
   });
 }
 
-function openTradeForEdit(trade) {
+async function openTradeForEdit(trade) {
   state.editingTradeId = trade.id;
   state.formStrategy = trade.strategy || "";
   state.formDirection = trade.direction || "";
@@ -993,9 +998,72 @@ function openTradeForEdit(trade) {
     updateFormTwoBullets();
   }
 
+  const beforeBlob = trade.before_image_id ? await getImageBlob(trade.before_image_id) : null;
+  const afterBlob = trade.after_image_id ? await getImageBlob(trade.after_image_id) : null;
+
+  clearFormBeforeImage();
+  if (beforeBlob) {
+    state.formImageUrl = URL.createObjectURL(beforeBlob);
+    refs.fBeforePreview.src = state.formImageUrl;
+    refs.fBeforePreviewWrap.hidden = false;
+    refs.fAfterWrap.hidden = false;
+    refs.fScreenshotLabel.textContent = "Before screenshot ✓";
+    refs.fScreenshotHint.textContent = "Replace before screenshot";
+  }
+
+  if (afterBlob) {
+    state.formAfterImageUrl = URL.createObjectURL(afterBlob);
+    refs.fAfterPreview.src = state.formAfterImageUrl;
+    refs.fAfterPreviewWrap.hidden = false;
+    refs.fAfterWrap.hidden = false;
+  }
+
   refs.fSaveBtn.textContent = "Update Trade";
   refs.fCancelBtn.hidden = false;
   setActiveScreen("log");
+}
+
+function summarizeLabels(labels) {
+  if (!labels.length) {
+    return "-";
+  }
+  if (labels.length <= 3) {
+    return labels.join(" | ");
+  }
+  return `${labels.slice(0, 3).join(" | ")} +${labels.length - 3}`;
+}
+
+async function deleteTradeFromDetail() {
+  const id = state.lightboxSourceTradeId;
+  const trade = state.trades.find((row) => row.id === id);
+  if (!trade) {
+    return;
+  }
+
+  const confirmed = window.confirm(`Delete ${trade.pair} @ ${formatPrice(trade.entry_price)}?`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await dbApi.deleteTrade(id);
+    if (trade.before_image_id) {
+      await dbApi.deleteImage(trade.before_image_id);
+    }
+    if (trade.after_image_id) {
+      await dbApi.deleteImage(trade.after_image_id);
+    }
+    await deleteTradeFromCloud(trade);
+
+    state.trades = state.trades.filter((row) => row.id !== id);
+    refs.tradeDetailModal.hidden = true;
+    refs.lightbox.hidden = true;
+    renderHistory();
+    showToast("Trade deleted");
+  } catch (error) {
+    console.error(error);
+    showToast("Delete failed");
+  }
 }
 
 function bindSettings() {
@@ -1177,7 +1245,11 @@ async function openTradeDetail(id) {
   state.lightboxIndex = 0;
 
   refs.detailTradeId.textContent = `${trade.trade_id} - ${trade.pair}`;
-  refs.detailBody.innerHTML = `<div class=\"detail-grid\">\n    <div><div class=\"detail-label\">Pair</div><div class=\"detail-value\">${escapeHtml(trade.pair)}</div></div>\n    <div><div class=\"detail-label\">Direction</div><div class=\"detail-value\">${escapeHtml(trade.direction)}</div></div>\n    <div><div class=\"detail-label\">Entry price (use this to find in MT5)</div><div class=\"detail-value\">${formatPrice(trade.entry_price)}</div></div>\n    <div><div class=\"detail-label\">Status</div><div class=\"detail-value\">${escapeHtml(trade.status)}</div></div>\n  </div>\n  <div><div class=\"detail-label\">Two Bullets</div><div class=\"detail-value\">${trade.two_bullets ? `B1: ${trade.b1_outcome || "Open"} ${trade.b1_pnl != null ? formatCurrency(trade.b1_pnl) : ""} | B2: ${trade.b2_outcome || "Open"} ${trade.b2_pnl != null ? formatCurrency(trade.b2_pnl) : ""} ${trade.b2_target_rr ? `(target 1:${trade.b2_target_rr})` : ""}` : "Off"}</div></div>\n  <div><div class=\"detail-label\">Note</div><div class=\"detail-value\">${escapeHtml(trade.note || "-")}</div></div>\n  <div class=\"detail-grid\">\n    ${beforeUrl ? `<div><div class=\"detail-label\">Before</div><img class=\"trade-image-thumb\" data-lightbox-index=\"0\" src=\"${beforeUrl}\" alt=\"Before\" /></div>` : ""}\n    ${afterUrl ? `<div><div class=\"detail-label\">After</div><img class=\"trade-image-thumb\" data-lightbox-index=\"1\" src=\"${afterUrl}\" alt=\"After\" /></div>` : ""}\n  </div>`;
+  const strategyItems = STRATEGY_CONFLUENCES[trade.strategy] || [];
+  const presentLabels = strategyItems.filter((item) => trade.confluences?.[item.key]).map((item) => item.label);
+  const absentLabels = strategyItems.filter((item) => !trade.confluences?.[item.key]).map((item) => item.label);
+
+  refs.detailBody.innerHTML = `<div class=\"detail-grid\">\n    <div><div class=\"detail-label\">Pair</div><div class=\"detail-value\">${escapeHtml(trade.pair)}</div></div>\n    <div><div class=\"detail-label\">Direction</div><div class=\"detail-value\">${escapeHtml(trade.direction)}</div></div>\n    <div><div class=\"detail-label\">Entry price</div><div class=\"detail-value\">${formatPrice(trade.entry_price)}</div></div>\n    <div><div class=\"detail-label\">Status</div><div class=\"detail-value\">${escapeHtml(trade.status)}</div></div>\n  </div>\n  <div><div class=\"detail-label\">Two Bullets</div><div class=\"detail-value\">${trade.two_bullets ? `B1: ${trade.b1_outcome || "Open"} ${trade.b1_pnl != null ? formatCurrency(trade.b1_pnl) : ""} | B2: ${trade.b2_outcome || "Open"} ${trade.b2_pnl != null ? formatCurrency(trade.b2_pnl) : ""} ${trade.b2_target_rr ? `(target 1:${trade.b2_target_rr})` : ""}` : "Off"}</div></div>\n  <div><div class=\"detail-label\">Confluences</div><div class=\"detail-confluence\">\n    <div class=\"detail-confluence-head\">\n      <span class=\"detail-confluence-pill present\">Present ${presentLabels.length}</span>\n      <span class=\"detail-confluence-pill absent\">Absent ${absentLabels.length}</span>\n    </div>\n    <div class=\"detail-confluence-line\"><strong>P:</strong> ${escapeHtml(summarizeLabels(presentLabels))}</div>\n    <div class=\"detail-confluence-line\"><strong>A:</strong> ${escapeHtml(summarizeLabels(absentLabels))}</div>\n  </div></div>\n  <div><div class=\"detail-label\">Note</div><div class=\"detail-value\">${escapeHtml(trade.note || "-")}</div></div>\n  <div class=\"detail-grid\">\n    ${beforeUrl ? `<div><div class=\"detail-label\">Before</div><img class=\"trade-image-thumb\" data-lightbox-index=\"0\" src=\"${beforeUrl}\" alt=\"Before\" /></div>` : ""}\n    ${afterUrl ? `<div><div class=\"detail-label\">After</div><img class=\"trade-image-thumb\" data-lightbox-index=\"1\" src=\"${afterUrl}\" alt=\"After\" /></div>` : ""}\n  </div>`;
 
   refs.detailBody.querySelectorAll("[data-lightbox-index]").forEach((img) => {
     img.addEventListener("click", () => {
@@ -1551,6 +1623,33 @@ async function syncTradeToCloud(trade) {
   }
 }
 
+async function deleteTradeFromCloud(trade) {
+  if (!supabaseClient || !state.authUser || !navigator.onLine) {
+    return;
+  }
+
+  const { error } = await supabaseClient
+    .from(SUPABASE_TRADES_TABLE)
+    .delete()
+    .eq("id", trade.id)
+    .eq("user_id", state.authUser.id);
+
+  if (error) {
+    console.error(error);
+  }
+
+  const filePaths = [trade.before_image_id, trade.after_image_id]
+    .filter(Boolean)
+    .map((imageId) => `${state.authUser.id}/${imageId}.png`);
+
+  if (filePaths.length) {
+    const removeResult = await supabaseClient.storage.from(SUPABASE_IMAGE_BUCKET).remove(filePaths);
+    if (removeResult.error) {
+      console.error(removeResult.error);
+    }
+  }
+}
+
 async function fetchAllFromSupabase() {
   const { data, error } = await supabaseClient
     .from(SUPABASE_TRADES_TABLE)
@@ -1759,6 +1858,12 @@ function createDbApi() {
       tx.objectStore(TRADE_STORE).clear();
       await done(tx);
     },
+    async deleteTrade(id) {
+      const db = await openDb();
+      const tx = db.transaction(TRADE_STORE, "readwrite");
+      tx.objectStore(TRADE_STORE).delete(id);
+      await done(tx);
+    },
     async saveImage(blob) {
       const id = createId();
       const db = await openDb();
@@ -1778,6 +1883,12 @@ function createDbApi() {
       const db = await openDb();
       const tx = db.transaction(IMAGE_STORE, "readwrite");
       tx.objectStore(IMAGE_STORE).put(image);
+      await done(tx);
+    },
+    async deleteImage(id) {
+      const db = await openDb();
+      const tx = db.transaction(IMAGE_STORE, "readwrite");
+      tx.objectStore(IMAGE_STORE).delete(id);
       await done(tx);
     },
   };
