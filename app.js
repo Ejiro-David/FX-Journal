@@ -175,8 +175,10 @@ const refs = {
   fTotalExposureHint: document.getElementById("fTotalExposureHint"),
   fB1Outcome: document.getElementById("fB1Outcome"),
   fB1Pnl: document.getElementById("fB1Pnl"),
+  fB1PnlPrefix: document.getElementById("fB1PnlPrefix"),
   fB2Outcome: document.getElementById("fB2Outcome"),
   fB2Pnl: document.getElementById("fB2Pnl"),
+  fB2PnlPrefix: document.getElementById("fB2PnlPrefix"),
   fB2TargetRr: document.getElementById("fB2TargetRr"),
   fB2StopMovedWrap: document.getElementById("fB2StopMovedWrap"),
   fB2StopMoved: document.getElementById("fB2StopMoved"),
@@ -622,9 +624,18 @@ function updateFormTwoBullets() {
   const lot = parseNumber(refs.fBulletLotSize.value) || 0.01;
   refs.fTotalExposureHint.textContent = `Total: ${round2(lot * 2)} lots`;
 
-  const b1 = parseNumber(refs.fB1Pnl.value) || 0;
-  const b2 = parseNumber(refs.fB2Pnl.value) || 0;
-  refs.fTwoBulletsTotalPnl.textContent = formatCurrency(round2(b1 + b2));
+  const b1Signed = getSignedPnlFromOutcome(refs.fB1Outcome.value, parseNumber(refs.fB1Pnl.value));
+  const b2Signed = getSignedPnlFromOutcome(refs.fB2Outcome.value, parseNumber(refs.fB2Pnl.value));
+  const b1Value = Number.isFinite(b1Signed) ? b1Signed : 0;
+  const b2Value = Number.isFinite(b2Signed) ? b2Signed : 0;
+  refs.fTwoBulletsTotalPnl.textContent = formatCurrency(round2(b1Value + b2Value));
+
+  updateBulletPnlPrefix(refs.fB1PnlPrefix, refs.fB1Outcome.value);
+  updateBulletPnlPrefix(refs.fB2PnlPrefix, refs.fB2Outcome.value);
+  refs.fB2Pnl.disabled = refs.fB2Outcome.value === "breakeven";
+  if (refs.fB2Outcome.value === "breakeven") {
+    refs.fB2Pnl.value = "0";
+  }
 
   const b2Outcome = refs.fB2Outcome.value;
   const rr = parseNumber(refs.fB2TargetRr.value);
@@ -728,12 +739,32 @@ async function saveTradeForm() {
   const entryPrice = parseNumber(refs.fEntryPrice.value);
   const lotSize = parseNumber(refs.fLotSize.value);
 
-  if (!pair || !direction || !entryPrice || entryPrice <= 0 || !lotSize || lotSize <= 0) {
-    showToast("Fill pair, direction, entry price and lot size");
+  if (!pair) {
+    showToast("Select a pair");
+    return;
+  }
+  if (!direction) {
+    showToast("Select direction (BUY or SELL)");
+    return;
+  }
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    showToast("Entry price must be greater than 0");
+    return;
+  }
+  if (!Number.isFinite(lotSize) || lotSize <= 0) {
+    showToast("Lot size must be greater than 0 lots");
     return;
   }
 
   const twoBullets = refs.fTwoBulletsToggle.checked;
+  if (twoBullets) {
+    const bulletLot = parseNumber(refs.fBulletLotSize.value);
+    if (!Number.isFinite(bulletLot) || bulletLot <= 0) {
+      showToast("Per-bullet lot size must be greater than 0 lots");
+      return;
+    }
+  }
+
   if (twoBullets) {
     const b1 = refs.fB1Outcome.value;
     const b2 = refs.fB2Outcome.value;
@@ -781,8 +812,8 @@ async function saveTradeForm() {
   if (twoBullets) {
     b1Outcome = refs.fB1Outcome.value || "";
     b2Outcome = refs.fB2Outcome.value || "";
-    b1Pnl = parseNumber(refs.fB1Pnl.value);
-    b2Pnl = parseNumber(refs.fB2Pnl.value);
+    b1Pnl = getSignedPnlFromOutcome(b1Outcome, parseNumber(refs.fB1Pnl.value));
+    b2Pnl = getSignedPnlFromOutcome(b2Outcome, parseNumber(refs.fB2Pnl.value));
     b2TargetRr = parseNumber(refs.fB2TargetRr.value);
     b2StopMoved = refs.fB2StopMoved.checked;
     outcome = !b1Outcome && !b2Outcome ? "" : b2Outcome || b1Outcome;
@@ -1450,6 +1481,41 @@ function getPnlWithSign(outcome, absoluteValue) {
     return 0;
   }
   return null;
+}
+
+function getSignedPnlFromOutcome(outcome, value) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const abs = Math.abs(value);
+  if (outcome === "win") {
+    return abs;
+  }
+  if (outcome === "loss") {
+    return -abs;
+  }
+  if (outcome === "breakeven") {
+    return 0;
+  }
+  return value;
+}
+
+function updateBulletPnlPrefix(prefixNode, outcome) {
+  if (!prefixNode) {
+    return;
+  }
+  if (outcome === "win") {
+    prefixNode.textContent = "+";
+    prefixNode.style.color = "var(--color-win)";
+    return;
+  }
+  if (outcome === "loss") {
+    prefixNode.textContent = "-";
+    prefixNode.style.color = "var(--color-loss)";
+    return;
+  }
+  prefixNode.textContent = "";
+  prefixNode.style.color = "var(--text-tertiary)";
 }
 
 function parseNumber(value) {
