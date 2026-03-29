@@ -504,8 +504,17 @@ async function setFormBeforeImage(file) {
   }
 
   refs.fAiLoading.hidden = false;
-  const ai = await inferConfluences(file, state.formStrategy || "SMC");
-  refs.fAiLoading.hidden = true;
+  startConfluenceScanAnimation();
+  let ai = null;
+  try {
+    ai = await inferConfluences(file, state.formStrategy || "SMC");
+  } catch (error) {
+    console.error(error);
+    showToast("AI analysis unavailable");
+  } finally {
+    stopConfluenceScanAnimation();
+    refs.fAiLoading.hidden = true;
+  }
   state.formAiResult = ai;
 
   if (!ai) {
@@ -573,6 +582,7 @@ function clearFormBeforeImage() {
   refs.fBeforePreview.removeAttribute("src");
   refs.fEntryPriceAiMark.hidden = true;
   refs.fAiLoading.hidden = true;
+  stopConfluenceScanAnimation();
   refs.fScreenshotLabel.textContent = "Before screenshot";
   refs.fScreenshotHint.textContent = "Paste, drag, or tap to add chart screenshot";
   clearFormAfterImage();
@@ -669,6 +679,33 @@ function renderFormConfluences() {
       ({ key, label }) => `<div class=\"confluence-item\" data-key=\"${escapeHtmlAttr(key)}\">\n        <span class=\"confluence-check\"></span>\n        <span>${escapeHtml(label)}</span>\n        <span class=\"confluence-help\" title=\"${escapeHtmlAttr(CONFLUENCE_EXPLAINERS[key] || "Confluence detail") }\">i</span>\n        <span class=\"ai-badge low\" hidden></span>\n      </div>`
     )
     .join("");
+}
+
+let confluenceScanTimer = null;
+
+function startConfluenceScanAnimation() {
+  stopConfluenceScanAnimation();
+  const rows = Array.from(refs.fConfluenceList.querySelectorAll(".confluence-item"));
+  if (!rows.length) {
+    return;
+  }
+
+  let i = 0;
+  confluenceScanTimer = window.setInterval(() => {
+    rows.forEach((row) => row.classList.remove("scan-pulse"));
+    rows[i % rows.length].classList.add("scan-pulse");
+    i += 1;
+  }, 100);
+}
+
+function stopConfluenceScanAnimation() {
+  if (confluenceScanTimer) {
+    window.clearInterval(confluenceScanTimer);
+    confluenceScanTimer = null;
+  }
+  refs.fConfluenceList.querySelectorAll(".confluence-item.scan-pulse").forEach((row) => {
+    row.classList.remove("scan-pulse");
+  });
 }
 
 function renderFormSessionPills() {
