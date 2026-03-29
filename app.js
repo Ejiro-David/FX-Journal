@@ -402,7 +402,11 @@ function bindTradeForm() {
     handleFormOutcomeChange(state.formOutcome);
   });
 
-  refs.fScreenshotZone.addEventListener("click", () => refs.fImageInput.click());
+  refs.fScreenshotZone.addEventListener("click", () => {
+    // Clear value so selecting the same file still triggers a change event.
+    refs.fImageInput.value = "";
+    refs.fImageInput.click();
+  });
   refs.fImageInput.addEventListener("change", async () => {
     const file = refs.fImageInput.files?.[0];
     if (file) {
@@ -424,7 +428,10 @@ function bindTradeForm() {
     }
   });
 
-  refs.fAfterZone.addEventListener("click", () => refs.fAfterInput.click());
+  refs.fAfterZone.addEventListener("click", () => {
+    refs.fAfterInput.value = "";
+    refs.fAfterInput.click();
+  });
   refs.fAfterInput.addEventListener("change", async () => {
     const file = refs.fAfterInput.files?.[0];
     if (file) {
@@ -845,10 +852,10 @@ async function saveTradeForm() {
   await dbApi.putTrade(trade);
   await syncTradeToCloud(trade);
 
-  showToast(`${existing ? "Updated" : "Logged as"} ${trade.trade_id} · entry @ ${formatPrice(entryPrice)}`);
+  showToast(existing ? "Trade updated" : "Trade saved");
   resetTradeForm();
   renderAll();
-  setActiveScreen("history");
+  setActiveScreen("log");
 }
 
 function resetTradeForm() {
@@ -1433,9 +1440,15 @@ function outcomeLabel(outcome) {
 }
 
 function showToast(message) {
+  if (showToast.timer) {
+    window.clearTimeout(showToast.timer);
+  }
   refs.toast.textContent = String(message || "");
   refs.toast.classList.remove("show");
-  window.setTimeout(() => refs.toast.classList.add("show"), 0);
+  window.requestAnimationFrame(() => refs.toast.classList.add("show"));
+  showToast.timer = window.setTimeout(() => {
+    refs.toast.classList.remove("show");
+  }, 3800);
 }
 
 function escapeHtml(value) {
