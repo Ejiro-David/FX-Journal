@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="T-Rex favicon">
+  <rect x="1" y="1" width="62" height="62" rx="12" fill="#0c0c0c" stroke="#ffffff" stroke-opacity="0.28" />
+  <path d="M16 44V26h10l3-6h8l4 4h7v6h-5l4 4v10h-7v-5h-4v5h-8v-8h-4v8z" fill="#f5f5f5"/>
+  <rect x="37" y="28" width="2" height="2" fill="#0c0c0c"/>
+  <rect x="42" y="34" width="1" height="1" fill="#0c0c0c"/>
+  <rect x="44" y="34" width="1" height="1" fill="#0c0c0c"/>
+  <rect x="46" y="34" width="1" height="1" fill="#0c0c0c"/>
+</svg>

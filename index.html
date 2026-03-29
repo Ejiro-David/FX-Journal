@@ -3,637 +3,373 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Private trade Journal</title>
-    <meta
-      name="description"
-      content="Private forex trade journal with confluence grading, screenshot evidence, and deep analytics."
-    />
-    <meta name="theme-color" content="#0b0e11" />
-    <meta property="og:type" content="website" />
-    <meta property="og:title" content="Private trade Journal" />
-    <meta
-      property="og:description"
-      content="Private forex trade journal with confluence grading, screenshot evidence, and deep analytics."
-    />
-    <meta property="og:image" content="/assets/share-card.svg" />
-    <meta property="og:image:type" content="image/svg+xml" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Private trade Journal" />
-    <meta
-      name="twitter:description"
-      content="Private forex trade journal with confluence grading, screenshot evidence, and deep analytics."
-    />
-    <meta name="twitter:image" content="/assets/share-card.svg" />
-    <link rel="icon" type="image/svg+xml" href="/assets/journal-icon.svg" />
-    <link rel="mask-icon" href="/assets/journal-icon.svg" color="#0b0e11" />
+    <title>Edge Forge v2</title>
+    <meta name="description" content="Edge Forge v2 - private trade capture ledger." />
+    <meta name="theme-color" content="#0d0d0d" />
+    <link rel="icon" type="image/svg+xml" href="assets/favicon-teerex.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="bg-glow bg-glow-a"></div>
-    <div class="bg-glow bg-glow-b"></div>
+    <div id="backtestBanner" class="backtest-banner" hidden>
+      <span>● BACKTEST MODE - trades will not affect live account</span>
+      <button id="exitBacktestBtn" type="button" class="banner-btn">Exit</button>
+    </div>
 
-    <main class="app-shell">
-      <header class="hero">
-        <div class="hero-brand">
-          <div>
-          <h1>Private trade Journal</h1>
-          </div>
-        </div>
-      </header>
+    <div class="app-layout">
+      <aside class="sidebar" aria-label="Main navigation">
+        <div class="sidebar-logo">EDGE FORGE</div>
+        <button class="sidebar-nav-item active" data-screen="history" type="button">History</button>
+        <button class="sidebar-nav-item" data-screen="log" type="button">Log Trade</button>
+        <button class="sidebar-nav-item" data-screen="settings" type="button">Settings</button>
+      </aside>
 
-      <details class="card form-card" id="entry-card">
-        <summary class="summary">
-          <span class="summary-title-wrap">
-            <span class="summary-title">Log Trade</span>
-          </span>
-          <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
-        </summary>
-
-        <div class="section-head section-head-tight">
-          <div class="entry-time-tools">
-            <div id="entryCapturedHint" class="micro-hint">Time: Auto</div>
-            <button id="manualTimeToggle" type="button" class="btn btn-ghost btn-tiny time-toggle-btn">Edit</button>
-          </div>
-        </div>
-
-        <form id="trade-form" novalidate>
-          <div id="manualTimeFields" class="manual-time-fields" style="display: none">
-            <label class="field">
-              Date & Time
-              <input id="tradeDateTime" name="tradeDateTime" type="datetime-local" />
-            </label>
-          </div>
-
-          <div class="compact-grid">
-            <label class="field">
-              Pair
-              <select id="pair" name="pair" required></select>
-            </label>
-            <label class="field">
-              Direction
-              <select id="direction" name="direction" required>
-                <option value="">-</option>
-                <option value="Buy">Buy</option>
-                <option value="Sell">Sell</option>
-              </select>
-            </label>
-            <label class="field">
-              Strategy
-              <select id="strategy" name="strategy" required>
-                <option value="">-</option>
-                <option value="ICC">ICC</option>
-                <option value="SMC">SMC</option>
-              </select>
-            </label>
-
-            <div class="field">
-              Session
-              <div class="chip-row" id="sessionChips">
-                <label class="chip"><input type="checkbox" name="session" value="London" /><span>London</span></label>
-                <label class="chip"><input type="checkbox" name="session" value="NY" /><span>NY</span></label>
-                <label class="chip"><input type="checkbox" name="session" value="Asian" /><span>Asian</span></label>
-              </div>
-              <div class="micro-hint">Multi-select allowed</div>
+      <main class="page-content">
+        <section id="screen-history" class="screen is-active" aria-labelledby="historyTitle">
+          <header class="screen-header">
+            <div>
+              <h1 id="historyTitle">History</h1>
+              <p class="muted">Capture ledger. Fast scan. Fast review.</p>
             </div>
+            <div id="sessionStatusPill" class="session-pill">● Off-Session</div>
+          </header>
 
-            <label class="field">
-              Outcome
-              <select id="outcome" name="outcome">
-                <option value="">Open - fill later</option>
-                <option value="Full Win">Full Win</option>
-                <option value="Partial + BE">Partial + BE</option>
-                <option value="Breakeven">Breakeven</option>
-                <option value="Full Loss">Full Loss</option>
-              </select>
-            </label>
-            <label class="field settings-switch">
-              Two Bullets trade?
-              <span class="settings-switch-row">
-                <input id="twoBulletsToggle" name="twoBulletsToggle" type="checkbox" />
-                <span>Enable split management</span>
-              </span>
-            </label>
-            <label id="entryPnlField" class="field entry-field-secondary is-secondary">
-              PnL ($)
-              <input id="pnl" name="pnl" type="text" placeholder="+3.50 or -1.20" />
-            </label>
-
-            <label class="field">
-              Lot Size
-              <div class="stepper lot-stepper">
-                <button type="button" class="stepper-btn" id="lotDec" aria-label="Decrease lot">-</button>
-                <input id="lotSize" name="lotSize" type="number" step="0.01" min="0.01" value="0.01" placeholder="0.01" required />
-                <button type="button" class="stepper-btn" id="lotInc" aria-label="Increase lot">+</button>
-              </div>
-              <div class="lot-presets" id="lotPresetRow">
-                <button type="button" class="lot-preset" data-lot-preset="0.01">0.01</button>
-                <button type="button" class="lot-preset" data-lot-preset="0.02">0.02</button>
-                <button type="button" class="lot-preset" data-lot-preset="0.05">0.05</button>
-                <button type="button" class="lot-preset" data-lot-preset="0.10">0.10</button>
-              </div>
-            </label>
+          <div class="history-filters">
+            <button class="pill active" data-filter-status="all" type="button">All</button>
+            <button class="pill" data-filter-status="open" type="button">Open</button>
+            <button class="pill" data-filter-status="closed" type="button">Closed</button>
+            <button class="pill" data-filter-strategy="all" type="button">All Strategies</button>
+            <button class="pill" data-filter-strategy="SMC" type="button">SMC</button>
+            <button class="pill" data-filter-strategy="ICC" type="button">ICC</button>
+            <button class="pill" data-filter-mode="all" type="button">All Modes</button>
+            <button class="pill" data-filter-mode="live" type="button">Live</button>
+            <button class="pill" data-filter-mode="backtest" type="button">Backtest</button>
+            <select id="filterPair" class="filter-select"></select>
+            <button id="clearFiltersBtn" class="pill action" type="button">Clear filters</button>
           </div>
 
-          <div id="twoBulletsCreatePanel" class="confluence-card two-bullets-panel" hidden>
-            <div class="section-head section-head-tight">
-              <span>Two Bullets</span>
-              <span class="micro-hint">Per bullet — total exposure is 2× this value</span>
+          <div id="historyList" class="history-list"></div>
+        </section>
+
+        <section id="screen-log" class="screen" aria-labelledby="logTitle">
+          <header class="screen-header">
+            <div>
+              <h1 id="logTitle">Log Trade</h1>
+              <p class="muted">Required fields first. Everything else when ready.</p>
             </div>
-            <div class="compact-grid two-bullets-grid">
+          </header>
+
+          <form id="tradeForm" class="form-panel" novalidate>
+            <article class="panel">
+              <h2>Trade</h2>
+
+              <div class="form-grid">
+                <label class="field">
+                  Pair
+                  <select id="fPair" required></select>
+                  <span id="fPairNote" class="hint"></span>
+                </label>
+
+                <div class="field">
+                  Direction
+                  <div class="direction-toggle" id="fDirectionToggle">
+                    <button class="direction-btn buy" data-value="buy" type="button">BUY</button>
+                    <button class="direction-btn sell" data-value="sell" type="button">SELL</button>
+                  </div>
+                </div>
+
+                <label class="field ai-field-wrap">
+                  Entry price
+                  <div class="input-with-meta">
+                    <input id="fEntryPrice" type="number" step="0.00001" placeholder="Entry price - used to match MT5 history" required />
+                    <span id="fEntryPriceAiMark" class="ai-filled" hidden>AI ✦</span>
+                  </div>
+                </label>
+
+                <label class="field">
+                  Lot size
+                  <input id="fLotSize" type="number" step="0.01" min="0.01" value="0.01" required />
+                </label>
+
+                <label class="field field-inline-label">
+                  <span>Stop loss <span class="hint">(optional)</span></span>
+                  <input id="fSlPrice" type="number" step="0.00001" placeholder="SL price" />
+                </label>
+
+                <label class="field field-inline-label">
+                  <span>Take profit <span class="hint">(optional)</span></span>
+                  <input id="fTpPrice" type="number" step="0.00001" placeholder="TP price" />
+                </label>
+
+                <label class="field">
+                  <span id="fScreenshotLabel">Before screenshot</span>
+                  <div id="fScreenshotZone" class="screenshot-zone" tabindex="0">
+                    <input id="fImageInput" type="file" accept="image/*" hidden />
+                    <div class="icon">▣</div>
+                    <div id="fScreenshotHint" class="hint">Paste, drag, or tap to add chart screenshot</div>
+                    <div class="sub-hint">AI will analyse this for confluences</div>
+                    <div id="fAiLoading" class="hint" hidden>✦ Analysing chart...</div>
+                  </div>
+                  <p id="fAiKeyHint" class="hint" hidden>Add a Claude API key in Settings to auto-detect confluences.</p>
+                  <div id="fBeforePreviewWrap" class="thumb-wrap" hidden>
+                    <img id="fBeforePreview" class="trade-image-thumb" alt="Before screenshot" />
+                    <button id="fClearBefore" class="btn" type="button">Remove</button>
+                  </div>
+                </label>
+
+                <div id="fAfterWrap" class="field" hidden>
+                  <span>After screenshot <span class="hint">(add when trade closes)</span></span>
+                  <div id="fAfterZone" class="screenshot-zone" tabindex="0">
+                    <input id="fAfterInput" type="file" accept="image/*" hidden />
+                    <div class="icon">▣</div>
+                    <div class="hint">Paste, drag, or tap to add after-trade screenshot</div>
+                  </div>
+                  <div id="fAfterPreviewWrap" class="thumb-wrap" hidden>
+                    <img id="fAfterPreview" class="trade-image-thumb" alt="After screenshot" />
+                    <button id="fClearAfter" class="btn" type="button">Remove</button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel">
+              <h2>Details <span class="hint" style="text-transform:none;letter-spacing:0;">(fill now or edit from history)</span></h2>
+
+              <div class="form-grid">
+                <label class="field">
+                  Strategy
+                  <div class="segmented" id="fStrategyToggle">
+                    <button class="seg-btn" data-strategy="SMC" type="button">SMC</button>
+                    <button class="seg-btn" data-strategy="ICC" type="button">ICC</button>
+                  </div>
+                </label>
+
+                <div class="field">
+                  Sessions
+                  <div id="fSessionPills" class="chip-row"></div>
+                </div>
+
+                <div id="fConfluenceWrap" class="field confluence-wrap" hidden>
+                  <div class="field-head">
+                    <span>Confluences</span>
+                    <span id="fAiAnalysisState" class="hint"></span>
+                  </div>
+                  <div id="fConfluenceList" class="confluence-list"></div>
+                </div>
+
+                <label class="field field-switch-inline">
+                  <span>Two Bullets</span>
+                  <span class="switch-row">
+                    <input id="fTwoBulletsToggle" type="checkbox" />
+                    <span>Enable split management</span>
+                  </span>
+                </label>
+
+                <div id="fTwoBulletsPanel" hidden>
+                  <div class="form-grid">
+                    <label class="field">
+                      Per-bullet lot size
+                      <input id="fBulletLotSize" type="number" step="0.01" min="0.01" value="0.01" />
+                      <span id="fTotalExposureHint" class="hint">Total: 0.02 lots</span>
+                    </label>
+                    <label class="field">
+                      Bullet 1 outcome
+                      <select id="fB1Outcome">
+                        <option value="">Open</option>
+                        <option value="win">Win</option>
+                        <option value="loss">Loss</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      Bullet 1 PnL
+                      <input id="fB1Pnl" type="number" step="0.01" />
+                    </label>
+                    <label class="field">
+                      Bullet 2 outcome
+                      <select id="fB2Outcome">
+                        <option value="">Open</option>
+                        <option value="win">Win</option>
+                        <option value="breakeven">Breakeven</option>
+                        <option value="loss">Loss</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      Bullet 2 PnL
+                      <input id="fB2Pnl" type="number" step="0.01" />
+                    </label>
+                    <label class="field">
+                      B2 target R:R
+                      <input id="fB2TargetRr" type="number" step="0.5" min="1" placeholder="e.g. 3" />
+                    </label>
+                    <label id="fB2StopMovedWrap" class="field warning-box" hidden>
+                      <span>⚠</span>
+                      <span class="switch-row">
+                        <input id="fB2StopMoved" type="checkbox" />
+                        <span>I have moved B2 stop to breakeven</span>
+                      </span>
+                    </label>
+                    <div class="stat-line">
+                      <span>Total PnL: <strong id="fTwoBulletsTotalPnl">$0.00</strong></span>
+                      <span>Effective R:R: <strong id="fEffectiveRr">-</strong></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="fSingleOutcomePanel" class="field">
+                  <div>Outcome</div>
+                  <div class="outcome-grid" id="fOutcomeGrid">
+                    <button class="outcome-btn win" data-outcome="win" type="button">WIN</button>
+                    <button class="outcome-btn loss" data-outcome="loss" type="button">LOSS</button>
+                    <button class="outcome-btn be" data-outcome="breakeven" type="button">BREAKEVEN</button>
+                    <button class="outcome-btn open active" data-outcome="" type="button">OPEN</button>
+                  </div>
+                </div>
+
+                <label id="fPnlWrap" class="field" hidden>
+                  PnL
+                  <div class="pnl-input-wrap">
+                    <span id="fPnlPrefix" class="pnl-prefix">+</span>
+                    <input id="fPnlInput" type="number" step="0.01" />
+                  </div>
+                </label>
+
+                <label class="field">
+                  Note
+                  <textarea id="fNote" rows="3" placeholder="Optional context, what you observed"></textarea>
+                </label>
+              </div>
+            </article>
+
+            <div class="form-panel" style="padding:0 0 8px;">
+              <button id="fSaveBtn" class="btn primary" type="submit" style="width:100%">Save Trade</button>
+              <button id="fClearBtn" class="btn btn-small" type="button" style="width:100%;margin-top:8px;">Clear Form</button>
+              <button id="fCancelBtn" class="btn" type="button" style="width:100%;margin-top:8px;" hidden>Cancel Edit</button>
+            </div>
+          </form>
+        </section>
+
+        <section id="screen-settings" class="screen" aria-labelledby="settingsTitle">
+          <header class="screen-header">
+            <div>
+              <h1 id="settingsTitle">Settings</h1>
+              <p class="muted">Local-first defaults, sync, exports, API keys.</p>
+            </div>
+          </header>
+
+          <div class="settings-grid-2">
+            <article class="panel">
+              <h2>Account</h2>
               <label class="field">
-                B1 Outcome
-                <select id="b1Outcome" name="b1Outcome">
-                  <option value="Open">Open</option>
-                  <option value="Win">Win</option>
-                  <option value="Loss">Loss</option>
-                </select>
+                Email
+                <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email" />
               </label>
-              <label class="field">
-                B2 Outcome
-                <select id="b2Outcome" name="b2Outcome">
-                  <option value="Open">Open</option>
-                  <option value="Win">Win (hit target)</option>
-                  <option value="Breakeven">Breakeven</option>
-                  <option value="Loss">Loss</option>
-                </select>
-              </label>
-              <label class="field">
-                B2 Target R:R
-                <input id="b2TargetRr" name="b2TargetRr" type="number" step="0.1" min="1" placeholder="3" />
-              </label>
-              <label class="field">
-                B1 PnL ($)
-                <input id="b1Pnl" name="b1Pnl" type="text" placeholder="+1.00 or -1.00" />
-              </label>
-              <label class="field">
-                B2 PnL ($)
-                <input id="b2Pnl" name="b2Pnl" type="text" placeholder="+3.00 or 0" />
-              </label>
-              <label class="field">
-                Total PnL ($)
-                <input id="twoBulletsTotalPnl" name="twoBulletsTotalPnl" type="text" readonly />
-              </label>
-              <label class="field note-field">
-                Effective R:R
-                <input id="twoBulletsEffectiveRr" name="twoBulletsEffectiveRr" type="text" readonly />
-              </label>
-            </div>
-          </div>
-
-          <div id="createConfluenceDetails" class="confluence-card" hidden>
-            <div class="section-head section-head-tight">
-              <span>Setup Checklist</span>
-              <span class="micro-hint">Tick all confluences that were present</span>
-            </div>
-            <div id="confluenceChecklist" class="confluence-grid"></div>
-            <div id="createSmcEntryTypesWrap" class="confluence-block smc-entry-wrap" hidden>
-              <div class="confluence-label">SMC Entry Type (optional)</div>
-              <div id="createSmcEntryTypes" class="chip-row"></div>
-            </div>
-            <div id="confluenceSummary" class="confluence-summary muted-empty">Select strategy to load checklist.</div>
-          </div>
-
-          <div class="upload-grid">
-            <div class="field" id="primaryScreenshotField">
-              Primary Screenshot (required)
-              <div id="beforeZone" class="drop-zone" tabindex="0">
-                <div class="dz-text">Drop / Paste / Browse</div>
-                <input id="beforeFile" class="file-overlay" type="file" accept="image/*" />
+              <div class="button-row">
+                <button id="sendMagicLinkBtn" class="btn" type="button">Send Magic Link</button>
+                <button id="signOutBtn" class="btn" type="button">Sign Out</button>
               </div>
-              <img id="beforePreview" class="preview" alt="Before preview" />
-              <button type="button" id="clearBefore" class="mini-btn" style="display: none">Remove</button>
-            </div>
-            <div class="field upload-optional" id="afterScreenshotField">
-              After Screenshot (optional)
-              <div id="afterZone" class="drop-zone" tabindex="0">
-                <div class="dz-text">Drop / Paste / Browse</div>
-                <input id="afterFile" class="file-overlay" type="file" accept="image/*" />
+              <p id="authState" class="hint">Not signed in</p>
+              <p id="syncState" class="hint">Sync idle</p>
+            </article>
+
+            <article class="panel">
+              <h2>AI Inference</h2>
+              <label class="field">
+                Claude API key
+                <input id="claudeApiKey" type="password" placeholder="sk-ant-..." />
+              </label>
+              <div class="button-row">
+                <button id="saveApiKeyBtn" class="btn" type="button">Save</button>
+                <button id="testApiKeyBtn" class="btn" type="button">Test connection</button>
               </div>
-              <img id="afterPreview" class="preview" alt="After preview" />
-              <button type="button" id="clearAfter" class="mini-btn" style="display: none">Remove</button>
-            </div>
-          </div>
+              <p class="hint">Stored only on this device. Never sent to Supabase.</p>
+            </article>
 
-          <label class="field note-field">
-            Note (optional)
-            <input id="note" name="note" type="text" maxlength="240" placeholder="Any useful context to remember this trade" />
-          </label>
-
-          <p id="form-error" class="error" role="alert"></p>
-
-          <div class="action-row action-row-sticky">
-            <button id="reset-form" type="button" class="btn btn-ghost">Clear</button>
-            <button type="submit" id="saveBtn" class="btn btn-primary">Log Trade</button>
-          </div>
-        </form>
-      </details>
-
-      <details class="card launch-secondary" id="analytics-card">
-        <summary class="summary">
-          <span class="summary-title">Edge Review</span>
-          <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
-        </summary>
-
-        <div id="analyticsTabs" class="analytics-tabs">
-          <button class="analytics-tab is-active" data-tab="performance" type="button">Performance</button>
-          <button class="analytics-tab" data-tab="risk" type="button">Risk</button>
-          <button class="analytics-tab" data-tab="confluence" type="button">Confluence</button>
-          <button class="analytics-tab" data-tab="sessions" type="button">Sessions/Timing</button>
-          <button class="analytics-tab" data-tab="market" type="button">Market/Execution</button>
-          <button class="analytics-tab" data-tab="behavior" type="button">Behavior</button>
-        </div>
-
-        <div id="analyticsPanel" class="analytics-panel"></div>
-      </details>
-
-      <details class="card launch-secondary" id="history-card">
-        <summary class="summary">
-          <span class="summary-title">Journal History</span>
-          <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
-        </summary>
-
-        <div class="history-status-tabs analytics-tabs" id="historyStatusTabs">
-          <button id="historyTabClosed" class="analytics-tab is-active" data-status="closed" type="button">Closed</button>
-          <button id="historyTabOpen" class="analytics-tab" data-status="open" type="button">Open</button>
-          <button id="historyTabAll" class="analytics-tab" data-status="all" type="button">All</button>
-        </div>
-
-        <div class="history-toolbar">
-          <div class="toolbar-row">
-            <button id="historyFilterToggle" class="btn btn-ghost btn-tiny" type="button">Filter</button>
-            <span id="historyFilterMeta" class="micro-hint">No filters</span>
-            <div class="view-toggle">
-              <button id="viewList" class="view-btn is-active" type="button" title="List view">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="0.5" fill="currentColor"/><circle cx="3" cy="12" r="0.5" fill="currentColor"/><circle cx="3" cy="18" r="0.5" fill="currentColor"/></svg>
-              </button>
-              <button id="viewGrid" class="view-btn" type="button" title="Gallery view">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-              </button>
-            </div>
-
-            <details class="history-menu" id="historyMenu">
-              <summary class="btn btn-ghost btn-tiny history-menu-trigger">More</summary>
-              <div class="history-menu-panel">
-                <button id="export-all" class="btn btn-ghost btn-tiny" type="button">Export All CSV</button>
-                <button id="export-filtered" class="btn btn-ghost btn-tiny" type="button">Export Filtered CSV</button>
+            <article class="panel">
+              <h2>Pairs</h2>
+              <div id="pairsList" class="kv-list"></div>
+              <div class="button-row">
+                <input id="newPairInput" type="text" placeholder="Add pair e.g. USDCAD" />
+                <button id="addPairBtn" class="btn" type="button">Add</button>
               </div>
-            </details>
-          </div>
+            </article>
 
-          <div id="historyFilterPanel" class="history-filter-panel" hidden>
-            <div class="filter-pills">
-              <select id="filterPair" class="filter-pill"><option value="">All Pairs</option></select>
-              <select id="filterDirection" class="filter-pill">
-                <option value="">All Directions</option>
-                <option value="Buy">Buy</option>
-                <option value="Sell">Sell</option>
-              </select>
-              <select id="filterSession" class="filter-pill">
-                <option value="">All Sessions</option>
-                <option value="London">London</option>
-                <option value="NY">NY</option>
-                <option value="Asian">Asian</option>
-              </select>
-              <select id="filterOutcome" class="filter-pill">
-                <option value="">All Outcomes</option>
-                <option value="Full Win">Full Win</option>
-                <option value="Partial + BE">Partial + BE</option>
-                <option value="Breakeven">Breakeven</option>
-                <option value="Full Loss">Full Loss</option>
-                <option value="__OPEN__">Open</option>
-              </select>
-              <select id="filterStrategy" class="filter-pill">
-                <option value="">All Strategies</option>
-                <option value="ICC">ICC</option>
-                <option value="SMC">SMC</option>
-              </select>
-              <select id="filterIntegrity" class="filter-pill">
-                <option value="">All Adherence</option>
-                <option value="Full">Full</option>
-                <option value="High">High</option>
-                <option value="Reduced">Reduced</option>
-                <option value="Bad">Bad</option>
-              </select>
-              <select id="filterGrade" class="filter-pill">
-                <option value="">All Grades</option>
-                <option value="A+">A+</option>
-                <option value="A">A</option>
-                <option value="B">B</option>
-                <option value="C">C</option>
-                <option value="F">F</option>
-              </select>
-              <select id="filterScreenshots" class="filter-pill">
-                <option value="">All Screenshots</option>
-                <option value="both">Both Images</option>
-                <option value="before_only">Before Only</option>
-                <option value="after_only">After Only</option>
-                <option value="missing_after">Missing After</option>
-              </select>
-            </div>
-            <div class="toolbar-row">
-              <button id="historyClearFilters" class="btn btn-ghost btn-tiny" type="button">Clear Filters</button>
-            </div>
-          </div>
-        </div>
-
-        <div id="historyGallery" class="history-gallery"></div>
-      </details>
-
-      <details class="card launch-secondary" id="settings-card">
-        <summary class="summary">
-          <span class="summary-title">Settings</span>
-          <span class="summary-v-wrap"><span class="summary-v" aria-hidden="true">⌄</span></span>
-        </summary>
-
-        <article id="settingsSyncCard" class="confluence-card settings-rules-card sync-card">
-          <div class="section-head section-head-tight">
-            <h3>Account & Sync</h3>
-          </div>
-          <div class="sync-status-block">
-            <div id="syncStatusPill" class="sync-pill is-offline">Offline</div>
-            <div id="syncQueueHint" class="sync-human-hint">Your data is safe locally. 0 changes waiting to sync.</div>
-            <div id="syncLastSync" class="micro-hint">Last sync: never</div>
-          </div>
-
-          <div class="settings-grid sync-grid">
-            <label class="field">
-              Account Email
-              <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email" />
-            </label>
-            <div class="field">
-              Actions
-              <div class="sync-action-row">
-                <button id="authSignIn" type="button" class="btn btn-ghost btn-tiny">Send Magic Link</button>
-                <button id="authSignOut" type="button" class="btn btn-ghost btn-tiny">Sign Out</button>
-                <button id="syncNowBtn" type="button" class="btn btn-primary btn-tiny">Sync Now</button>
+            <article class="panel">
+              <h2>Sessions</h2>
+              <div id="sessionsList" class="kv-list"></div>
+              <div class="button-row">
+                <input id="newSessionInput" type="text" placeholder="Add session" />
+                <button id="addSessionBtn" class="btn" type="button">Add</button>
               </div>
-              <div id="authStatus" class="micro-hint">Not signed in</div>
-            </div>
-          </div>
-        </article>
+            </article>
 
-        <article class="confluence-card settings-rules-card">
-          <div class="section-head section-head-tight">
-            <h3>Journal Preferences</h3>
+            <article class="panel">
+              <h2>Defaults</h2>
+              <label class="field">Default lot size<input id="defaultLotInput" type="number" step="0.01" min="0.01" /></label>
+              <label class="field">Default strategy<select id="defaultStrategySelect"><option value="SMC">SMC</option><option value="ICC">ICC</option></select></label>
+              <label class="field">Default session<select id="defaultSessionSelect"></select></label>
+              <label class="field">
+                Backtest mode
+                <span class="switch-row">
+                  <input id="backtestModeToggle" type="checkbox" />
+                  <span>Enable backtest mode for new trades</span>
+                </span>
+              </label>
+              <button id="saveDefaultsBtn" class="btn" type="button">Save defaults</button>
+            </article>
+
+            <article class="panel">
+              <h2>Export</h2>
+              <div class="button-stack">
+                <button id="exportLiveJsonBtn" class="btn" type="button">Export Live Trades - JSON</button>
+                <button id="exportBacktestJsonBtn" class="btn" type="button">Export Backtest Trades - JSON</button>
+                <button id="exportAllJsonBtn" class="btn" type="button">Export All Trades - JSON</button>
+                <button id="exportLiveCsvBtn" class="btn" type="button">Export Live Trades - CSV</button>
+                <button id="exportBacktestCsvBtn" class="btn" type="button">Export Backtest Trades - CSV</button>
+              </div>
+            </article>
+
+            <article class="panel">
+              <h2>Sync</h2>
+              <button id="forceSyncBtn" class="btn" type="button">Force Sync</button>
+              <p class="hint">Hard refresh from Supabase into local IndexedDB.</p>
+              <h2>About</h2>
+              <p class="hint">Edge Forge v2.0.0</p>
+            </article>
           </div>
-        <div class="settings-grid settings-grid-compact">
-          <label class="field settings-switch">
-            Insight Reel
-            <span class="settings-switch-row">
-              <input id="settingShowInsightReel" type="checkbox" />
-              <span>Show at top</span>
-            </span>
-          </label>
-          <label class="field">
-            Enabled Strategies
-            <select id="settingStrategyMode">
-              <option value="all">All strategies</option>
-            </select>
-          </label>
+        </section>
+      </main>
+    </div>
+
+    <nav class="bottom-nav" aria-label="Primary">
+      <button class="nav-btn active" data-screen="history" type="button">History</button>
+      <button class="nav-btn nav-fab" data-screen="log" type="button">+</button>
+      <button class="nav-btn" data-screen="settings" type="button">Settings</button>
+    </nav>
+
+    <div id="tradeDetailModal" class="modal" hidden>
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="detailTradeId">Trade Detail</h2>
+          <button id="closeDetailBtn" class="btn" type="button">Close</button>
         </div>
-        </article>
+        <div id="detailBody" class="detail-body"></div>
+        <div class="modal-actions">
+          <button id="editFromDetailBtn" class="btn" type="button">Edit in Log</button>
+        </div>
+      </div>
+    </div>
 
-        <article class="confluence-card settings-rules-card">
-          <div class="section-head section-head-tight">
-            <h3>Sessions</h3>
-            <button id="settingsSaveSessions" type="button" class="btn btn-primary btn-tiny">Save Sessions</button>
-          </div>
-
-          <div id="settingsSessionEditor" class="settings-rule-editor"></div>
-
-          <div class="settings-strategy-add">
-            <input id="settingsNewSession" type="text" maxlength="24" placeholder="Add session (e.g. NY Lunch)" />
-            <button id="settingsAddSession" type="button" class="btn btn-ghost btn-tiny">Add Session</button>
-          </div>
-        </article>
-
-        <article class="confluence-card settings-rules-card">
-          <div class="section-head section-head-tight">
-            <h3>Strategy Rules</h3>
-            <div class="settings-actions">
-              <button id="settingsResetRules" type="button" class="btn btn-ghost btn-tiny">Reset Defaults</button>
-              <button id="settingsDuplicateStrategy" type="button" class="btn btn-ghost btn-tiny">Duplicate Strategy</button>
-              <button id="settingsSaveRules" type="button" class="btn btn-primary btn-tiny">Save Rules</button>
-            </div>
-          </div>
-
-          <div id="settingsStrategyTabs" class="analytics-tabs settings-tabs"></div>
-
-          <div class="settings-strategy-add">
-            <input id="settingsNewStrategy" type="text" maxlength="24" placeholder="Add strategy (e.g. SMT)" />
-            <button id="settingsAddStrategy" type="button" class="btn btn-ghost btn-tiny">Add Strategy</button>
-          </div>
-
-          <div id="settingsRuleEditor" class="settings-rule-editor"></div>
-
-          <div class="settings-rule-protect">
-            <label class="settings-switch-row">
-              <input id="settingsRulesNewOnly" type="checkbox" checked />
-              <span>Apply changes to new trades only (keep historical analytics frozen)</span>
-            </label>
-          </div>
-          <div class="micro-hint">
-            Core = missing makes setup invalid. Backing = context/support layer. Quality = improves entry quality.
-          </div>
-        </article>
-      </details>
-
-      <footer class="app-footer">built by teerex 🦖</footer>
-    </main>
+    <div id="lightbox" class="lightbox" hidden>
+      <button id="lightboxClose" class="lightbox-close" type="button">×</button>
+      <button id="lightboxPrev" class="lightbox-nav" type="button">‹</button>
+      <img id="lightboxImage" alt="Trade screenshot" />
+      <button id="lightboxNext" class="lightbox-nav" type="button">›</button>
+    </div>
 
     <div id="toast" class="toast" aria-live="polite"></div>
 
-    <div id="trade-detail-modal" class="modal-backdrop" style="display: none">
-      <div class="modal-box detail-modal-box">
-        <div class="section-head">
-          <h2>Trade Detail</h2>
-          <button type="button" id="detail-modal-close" class="btn btn-ghost">Close</button>
-        </div>
-        <div id="detailModalBody" class="detail-body"></div>
-        <div class="action-row">
-          <button id="detailEditBtn" type="button" class="btn btn-primary">Edit Trade</button>
-          <button id="detailCloseBtn" type="button" class="btn btn-ghost">Close Trade</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="edit-modal" class="modal-backdrop" style="display: none">
-      <div class="modal-box">
-        <div class="section-head">
-          <h2>Edit Trade</h2>
-          <button type="button" id="modal-close" class="btn btn-ghost">Close</button>
-        </div>
-
-        <form id="edit-form" novalidate>
-          <input type="hidden" id="editId" />
-
-          <div class="compact-grid">
-            <label class="field">
-              Pair
-              <select id="editPair"></select>
-            </label>
-            <label class="field">Direction
-              <select id="editDirection">
-                <option value="">-</option>
-                <option value="Buy">Buy</option>
-                <option value="Sell">Sell</option>
-              </select>
-            </label>
-            <label class="field">Lot Size
-              <div class="stepper">
-                <button type="button" class="stepper-btn" id="editLotDec" aria-label="Decrease lot">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                </button>
-                <input id="editLotSize" type="number" step="0.01" min="0.01" />
-                <button type="button" class="stepper-btn" id="editLotInc" aria-label="Increase lot">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                </button>
-              </div>
-            </label>
-            <div class="field">Session
-              <div class="chip-row" id="editSessionChips">
-                <label class="chip"><input type="checkbox" name="editSession" value="London" /><span>London</span></label>
-                <label class="chip"><input type="checkbox" name="editSession" value="NY" /><span>NY</span></label>
-                <label class="chip"><input type="checkbox" name="editSession" value="Asian" /><span>Asian</span></label>
-              </div>
-            </div>
-            <label class="field">Strategy
-              <select id="editStrategy">
-                <option value="">-</option>
-                <option value="ICC">ICC</option>
-                <option value="SMC">SMC</option>
-              </select>
-            </label>
-            <label class="field">Outcome
-              <select id="editOutcome">
-                <option value="">Open - fill later</option>
-                <option value="Full Win">Full Win</option>
-                <option value="Partial + BE">Partial + BE</option>
-                <option value="Breakeven">Breakeven</option>
-                <option value="Full Loss">Full Loss</option>
-              </select>
-            </label>
-            <label class="field settings-switch">
-              Two Bullets trade?
-              <span class="settings-switch-row">
-                <input id="editTwoBulletsToggle" type="checkbox" />
-                <span>Enable split management</span>
-              </span>
-            </label>
-            <label class="field">PnL ($)<input id="editPnl" type="text" /></label>
-            <label class="field note-field">Note<input id="editNote" type="text" maxlength="240" /></label>
-          </div>
-
-          <div id="twoBulletsEditPanel" class="confluence-card two-bullets-panel" hidden>
-            <div class="section-head section-head-tight">
-              <span>Two Bullets</span>
-              <span class="micro-hint">Per bullet — total exposure is 2× this value</span>
-            </div>
-            <div class="compact-grid two-bullets-grid">
-              <label class="field">
-                B1 Outcome
-                <select id="editB1Outcome">
-                  <option value="Open">Open</option>
-                  <option value="Win">Win</option>
-                  <option value="Loss">Loss</option>
-                </select>
-              </label>
-              <label class="field">
-                B2 Outcome
-                <select id="editB2Outcome">
-                  <option value="Open">Open</option>
-                  <option value="Win">Win (hit target)</option>
-                  <option value="Breakeven">Breakeven</option>
-                  <option value="Loss">Loss</option>
-                </select>
-              </label>
-              <label class="field">
-                B2 Target R:R
-                <input id="editB2TargetRr" type="number" step="0.1" min="1" placeholder="3" />
-              </label>
-              <label class="field">
-                B1 PnL ($)
-                <input id="editB1Pnl" type="text" placeholder="+1.00 or -1.00" />
-              </label>
-              <label class="field">
-                B2 PnL ($)
-                <input id="editB2Pnl" type="text" placeholder="+3.00 or 0" />
-              </label>
-              <label class="field">
-                Total PnL ($)
-                <input id="editTwoBulletsTotalPnl" type="text" readonly />
-              </label>
-              <label class="field note-field">
-                Effective R:R
-                <input id="editTwoBulletsEffectiveRr" type="text" readonly />
-              </label>
-            </div>
-          </div>
-
-          <details id="editConfluenceDetails" class="confluence-card confluence-collapsible">
-            <summary class="confluence-toggle">
-              <span>Setup Checklist</span>
-              <span class="confluence-toggle-meta">
-                <span class="micro-hint">Tap to expand</span>
-                <span class="confluence-toggle-v" aria-hidden="true">⌄</span>
-              </span>
-            </summary>
-            <div class="confluence-body">
-              <div class="section-head section-head-tight">
-                <div class="micro-hint">Tick all confluences that were present</div>
-                <button id="editManualTimeToggle" type="button" class="btn btn-ghost btn-tiny time-toggle-btn">Set Time Manually</button>
-              </div>
-              <div id="editManualTimeFields" class="manual-time-fields" style="display: none">
-                <label class="field">Date & Time<input id="editDateTime" type="datetime-local" /></label>
-              </div>
-              <div id="editConfluenceChecklist" class="confluence-grid"></div>
-              <div id="editSmcEntryTypesWrap" class="confluence-block smc-entry-wrap" hidden>
-                <div class="confluence-label">SMC Entry Type (optional)</div>
-                <div id="editSmcEntryTypes" class="chip-row"></div>
-              </div>
-              <div id="editConfluenceSummary" class="confluence-summary muted-empty"></div>
-            </div>
-          </details>
-
-          <div class="upload-grid">
-            <div class="field">
-              Before Screenshot
-              <div id="editBeforeZone" class="drop-zone" tabindex="0">
-                <div class="dz-text">Drop / Paste / Browse</div>
-                <input id="editBeforeFile" class="file-overlay" type="file" accept="image/*" />
-              </div>
-              <img id="editBeforePreview" class="preview" alt="Before preview" />
-              <button type="button" id="editClearBefore" class="mini-btn" style="display: none">Remove</button>
-            </div>
-            <div class="field">
-              After Screenshot
-              <div id="editAfterZone" class="drop-zone" tabindex="0">
-                <div class="dz-text">Drop / Paste / Browse</div>
-                <input id="editAfterFile" class="file-overlay" type="file" accept="image/*" />
-              </div>
-              <img id="editAfterPreview" class="preview" alt="After preview" />
-              <button type="button" id="editClearAfter" class="mini-btn" style="display: none">Remove</button>
-            </div>
-          </div>
-
-          <p id="edit-error" class="error"></p>
-          <div class="action-row">
-            <button id="delete-trade" type="button" class="btn btn-danger">Delete</button>
-            <button type="submit" class="btn btn-primary">Save Changes</button>
-          </div>
-        </form>
-      </div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="app.js"></script>
   </body>
