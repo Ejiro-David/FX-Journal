@@ -15,6 +15,7 @@ const STORAGE_KEYS = {
   LOCAL_BACKUP: "edgeForgeLocalBackupV1",
   LAST_SYNCED: "edgeForgeLastSyncedV1",
 };
+const MIN_CLOUD_JOB_INTERVAL_MS = 1200;
 
 const DEFAULT_PAIRS = ["GBPUSD", "EURUSD", "GBPJPY", "USDJPY", "XAUUSD", "GBPCAD", "EURGBP", "AUDUSD"];
 const DEFAULT_SESSIONS = ["London", "NY", "Asian"];
@@ -113,6 +114,8 @@ const state = {
   settings: loadSettings(),
   filters: { status: "all", strategy: "all", mode: "all", pair: "all" },
   syncBusy: false,
+  cloudQueueSize: 0,
+  localOnlyReminderShown: false,
   lightboxImages: [],
   lightboxIndex: 0,
   lightboxSourceTradeId: "",
@@ -226,12 +229,15 @@ const refs = {
   closeDetailBtn: document.getElementById("closeDetailBtn"),
   editFromDetailBtn: document.getElementById("editFromDetailBtn"),
   deleteTradeBtn: document.getElementById("deleteTradeBtn"),
+  wipeHistoryBtn: document.getElementById("wipeHistoryBtn"),
   lightbox: document.getElementById("lightbox"),
   lightboxImage: document.getElementById("lightboxImage"),
   lightboxClose: document.getElementById("lightboxClose"),
   lightboxPrev: document.getElementById("lightboxPrev"),
   lightboxNext: document.getElementById("lightboxNext"),
   toast: document.getElementById("toast"),
+  tradeCountHint: document.getElementById("tradeCountHint"),
+  redirectUrlHint: document.getElementById("redirectUrlHint"),
 };
 
 void init();
@@ -886,6 +892,11 @@ async function saveTradeForm() {
   await dbApi.putTrade(trade);
   await syncTradeToCloud(trade);
 
+  if (!state.authUser && !state.localOnlyReminderShown) {
+    showToast("Saved locally only. Sign in with Magic Link to sync this device to cloud.");
+    state.localOnlyReminderShown = true;
+  }
+
   showToast(`${existing ? "Updated" : "Saved"} ${trade.trade_id} · @ ${formatPrice(entryPrice)}`);
   resetTradeForm();
   renderAll();
@@ -1154,6 +1165,7 @@ function bindSettings() {
   refs.exportLiveCsvBtn.addEventListener("click", () => exportCsv((trade) => !trade.is_backtest, "edge-forge-live"));
   refs.exportBacktestCsvBtn.addEventListener("click", () => exportCsv((trade) => trade.is_backtest, "edge-forge-backtest"));
   refs.forceSyncBtn.addEventListener("click", forceSync);
+  refs.wipeHistoryBtn.addEventListener("click", wipeHistoryWithConfirmation);
 
   refs.sendMagicLinkBtn.addEventListener("click", signInWithMagicLink);
   refs.signOutBtn.addEventListener("click", signOut);
@@ -1204,7 +1216,17 @@ function renderAll() {
   renderFormSessionPills();
   renderHistory();
   renderSettings();
+  renderTradeCountHint();
   refs.backtestBanner.hidden = !state.settings.backtestMode;
+}
+
+function renderTradeCountHint() {
+  if (!refs.tradeCountHint) {
+    return;
+  }
+  const count = state.trades.length;
+  const mode = state.authUser ? "" : " · local-only";
+  refs.tradeCountHint.textContent = `${count} trade${count === 1 ? "" : "s"} recorded${mode}`;
 }
 
 function renderPairSelects() {
@@ -1303,6 +1325,10 @@ function renderSettings() {
     .join("");
   refs.defaultSessionSelect.value = state.settings.defaultSession || state.settings.sessions[0] || "";
   refs.backtestModeToggle.checked = Boolean(state.settings.backtestMode);
+  if (refs.redirectUrlHint) {
+    const redirectOrigin = window.location.origin || window.location.href;
+    refs.redirectUrlHint.textContent = `Supabase redirect URL: ${redirectOrigin}`;
+  }
 
   refs.pairsList.innerHTML = state.settings.pairs
     .map((pair) => `<div class=\"kv-item\"><div><strong>${escapeHtml(pair)}</strong><div class=\"hint\">${escapeHtml(state.settings.pairNotes[pair] || "No note")}</div></div><button class=\"btn\" data-remove-pair=\"${escapeHtmlAttr(pair)}\" type=\"button\">Remove</button></div>`)
@@ -1633,6 +1659,7 @@ async function setupAuth() {
 
 function renderAuthState() {
   refs.authState.textContent = state.authUser ? `Signed in as ${state.authUser.email || "user"}` : "Not signed in";
+  updateSyncStateHint();
 }
 
 async function signInWithMagicLink() {
@@ -1643,6 +1670,10 @@ async function signInWithMagicLink() {
   const email = refs.authEmail.value.trim();
   if (!email) {
     showToast("Enter email first");
+    return;
+  }
+  if (!isValidEmail(email)) {
+    showToast("Enter a valid email address");
     return;
   }
   try {
@@ -1681,6 +1712,10 @@ async function signInWithMagicLink() {
   }
 }
 
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
 async function signOut() {
   if (!supabaseClient) {
     return;
@@ -1694,23 +1729,25 @@ async function syncTradeToCloud(trade) {
     return;
   }
   try {
-    await syncImageToCloud(trade.before_image_id);
-    await syncImageToCloud(trade.after_image_id);
-    const payload = normalizeTrade(trade);
-    const { error } = await supabaseClient
-      .from(SUPABASE_TRADES_TABLE)
-      .upsert(
-        {
-          id: payload.id,
-          user_id: state.authUser.id,
-          trade: payload,
-          updated_at: payload.updated_at,
-        },
-        { onConflict: "id" }
-      );
-    if (error) {
-      console.error(error);
-    }
+    await queueCloudJob(async () => {
+      await uploadImageToCloud(trade.before_image_id);
+      await uploadImageToCloud(trade.after_image_id);
+      const payload = normalizeTrade(trade);
+      const { error } = await supabaseClient
+        .from(SUPABASE_TRADES_TABLE)
+        .upsert(
+          {
+            id: payload.id,
+            user_id: state.authUser.id,
+            trade: payload,
+            updated_at: payload.updated_at,
+          },
+          { onConflict: "id" }
+        );
+      if (error) {
+        console.error(error);
+      }
+    });
   } catch (error) {
     console.error(error);
   }
@@ -1720,27 +1757,28 @@ async function deleteTradeFromCloud(trade) {
   if (!supabaseClient || !state.authUser || !navigator.onLine) {
     return;
   }
+  await queueCloudJob(async () => {
+    const { error } = await supabaseClient
+      .from(SUPABASE_TRADES_TABLE)
+      .delete()
+      .eq("id", trade.id)
+      .eq("user_id", state.authUser.id);
 
-  const { error } = await supabaseClient
-    .from(SUPABASE_TRADES_TABLE)
-    .delete()
-    .eq("id", trade.id)
-    .eq("user_id", state.authUser.id);
-
-  if (error) {
-    console.error(error);
-  }
-
-  const filePaths = [trade.before_image_id, trade.after_image_id]
-    .filter(Boolean)
-    .map((imageId) => `${state.authUser.id}/${imageId}.png`);
-
-  if (filePaths.length) {
-    const removeResult = await supabaseClient.storage.from(SUPABASE_IMAGE_BUCKET).remove(filePaths);
-    if (removeResult.error) {
-      console.error(removeResult.error);
+    if (error) {
+      console.error(error);
     }
-  }
+
+    const filePaths = [trade.before_image_id, trade.after_image_id]
+      .filter(Boolean)
+      .map((imageId) => `${state.authUser.id}/${imageId}.png`);
+
+    if (filePaths.length) {
+      const removeResult = await supabaseClient.storage.from(SUPABASE_IMAGE_BUCKET).remove(filePaths);
+      if (removeResult.error) {
+        console.error(removeResult.error);
+      }
+    }
+  });
 }
 
 async function fetchAllFromSupabase() {
@@ -1756,6 +1794,10 @@ async function fetchAllFromSupabase() {
 }
 
 async function syncImageToCloud(imageId) {
+  return queueCloudJob(() => uploadImageToCloud(imageId));
+}
+
+async function uploadImageToCloud(imageId) {
   if (!imageId || !supabaseClient || !state.authUser) {
     return;
   }
@@ -1807,17 +1849,11 @@ async function forceSync() {
   state.syncBusy = true;
   refs.syncState.textContent = "Syncing...";
   try {
-    // Create a local backup before any destructive operation
-    const backup = await backupLocalTrades();
-    // Fetch cloud trades
+    await backupLocalTrades();
     const cloudTrades = await fetchAllFromSupabase();
-
-    // Merge strategy: preserve local changes, pull newer cloud changes, and push local-only/newer items to cloud
     const localTrades = await dbApi.getAllTrades();
     const localMap = Object.fromEntries(localTrades.map((t) => [t.id, t]));
     const cloudMap = Object.fromEntries(cloudTrades.map((t) => [t.id, t]));
-
-    // Process union of ids
     const allIds = Array.from(new Set([...Object.keys(localMap), ...Object.keys(cloudMap)]));
 
     for (const id of allIds) {
@@ -1828,47 +1864,130 @@ async function forceSync() {
         const localTs = new Date(local.updated_at || local.created_at).getTime();
         const cloudTs = new Date(cloud.updated_at || cloud.created_at).getTime();
         if (localTs >= cloudTs) {
-          // local is newer: keep local and push to cloud to avoid losing local edits
           await dbApi.putTrade(local);
-          try {
-            await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert({ id: local.id, user_id: state.authUser.id, trade: local, updated_at: local.updated_at }, { onConflict: "id" });
-          } catch (err) {
-            console.error('Failed to push local newer trade to cloud', err);
-          }
+          await queueCloudJob(async () => {
+            try {
+              await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert(
+                { id: local.id, user_id: state.authUser.id, trade: local, updated_at: local.updated_at },
+                { onConflict: "id" }
+              );
+            } catch (err) {
+              console.error('Failed to push local newer trade to cloud', err);
+            }
+          });
         } else {
-          // cloud is newer: overwrite local
           await dbApi.putTrade(cloud);
         }
       } else if (cloud && !local) {
-        // cloud-only -> insert locally
         await dbApi.putTrade(cloud);
       } else if (local && !cloud) {
-        // local-only -> attempt to push to cloud
         await dbApi.putTrade(local);
-        try {
-          await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert({ id: local.id, user_id: state.authUser.id, trade: local, updated_at: local.updated_at }, { onConflict: "id" });
-        } catch (err) {
-          console.error('Failed to push local-only trade to cloud', err);
-        }
+        await queueCloudJob(async () => {
+          try {
+            await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert(
+              { id: local.id, user_id: state.authUser.id, trade: local, updated_at: local.updated_at },
+              { onConflict: "id" }
+            );
+          } catch (err) {
+            console.error('Failed to push local-only trade to cloud', err);
+          }
+        });
       }
     }
 
-    // Refresh in-memory state from local DB and render
     const merged = await dbApi.getAllTrades();
-    state.trades = merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    state.trades = merged.map(normalizeTrade).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     renderAll();
-    // record last synced time
     const nowIso = new Date().toISOString();
     localStorage.setItem(STORAGE_KEYS.LAST_SYNCED, nowIso);
-    refs.syncState.textContent = `Synced ${new Date(nowIso).toLocaleString()}`;
+    updateSyncStateHint();
     showToast(`Synced - ${state.trades.length} trades (merge) — backup saved`);
   } catch (error) {
     console.error(error);
     showToast("Force sync failed");
   } finally {
     state.syncBusy = false;
-    // leave the human-readable last sync state in place
+    updateSyncStateHint();
   }
+}
+
+async function wipeHistoryWithConfirmation() {
+  const total = state.trades.length;
+  if (!total) {
+    showToast("No trades to wipe");
+    return;
+  }
+  const first = window.prompt(`Type WIPE to delete all ${total} local trades and images.`);
+  if (first !== "WIPE") {
+    showToast("Wipe cancelled");
+    return;
+  }
+  const second = window.prompt(`Type the number ${total} to confirm the wipe.`);
+  if (second !== String(total)) {
+    showToast("Wipe cancelled");
+    return;
+  }
+
+  try {
+    await backupLocalTrades();
+    const current = await dbApi.getAllTrades();
+    await dbApi.clearTrades();
+    for (const trade of current) {
+      if (trade.before_image_id) {
+        await dbApi.deleteImage(trade.before_image_id);
+      }
+      if (trade.after_image_id) {
+        await dbApi.deleteImage(trade.after_image_id);
+      }
+    }
+    state.trades = [];
+    renderAll();
+    showToast("History wiped locally");
+  } catch (error) {
+    console.error(error);
+    showToast("Wipe failed");
+  }
+}
+
+let cloudQueueTail = Promise.resolve();
+let lastCloudJobAt = 0;
+
+async function queueCloudJob(job) {
+  state.cloudQueueSize += 1;
+  updateSyncStateHint();
+  const run = async () => {
+    const waitMs = Math.max(0, MIN_CLOUD_JOB_INTERVAL_MS - (Date.now() - lastCloudJobAt));
+    if (waitMs > 0) {
+      await delay(waitMs);
+    }
+    try {
+      return await job();
+    } finally {
+      lastCloudJobAt = Date.now();
+      state.cloudQueueSize = Math.max(0, state.cloudQueueSize - 1);
+      updateSyncStateHint();
+    }
+  };
+  const next = cloudQueueTail.then(run, run);
+  cloudQueueTail = next.catch(() => {});
+  return next;
+}
+
+function updateSyncStateHint() {
+  if (!refs.syncState) {
+    return;
+  }
+  if (!state.authUser) {
+    refs.syncState.textContent = `Local-only mode · ${state.trades.length} unsynced trade${state.trades.length === 1 ? "" : "s"}`;
+    return;
+  }
+  const lastSynced = localStorage.getItem(STORAGE_KEYS.LAST_SYNCED);
+  const syncText = lastSynced ? `Last synced ${new Date(lastSynced).toLocaleString()}` : "Sync idle";
+  refs.syncState.textContent = state.cloudQueueSize > 0 ? `${syncText} · Queue ${state.cloudQueueSize}` : syncText;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function backupLocalTrades() {
