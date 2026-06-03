@@ -12,6 +12,8 @@ const STORAGE_KEYS = {
   SETTINGS: "edgeForgeSettingsV2",
   CLAUDE_KEY: "edgeForgeClaudeKey",
   AI_HINT_DISMISSED: "edgeForgeAiHintDismissedV1",
+  LOCAL_BACKUP: "edgeForgeLocalBackupV1",
+  LAST_SYNCED: "edgeForgeLastSyncedV1",
 };
 
 const DEFAULT_PAIRS = ["GBPUSD", "EURUSD", "GBPJPY", "USDJPY", "XAUUSD", "GBPCAD", "EURGBP", "AUDUSD"];
@@ -1643,15 +1645,40 @@ async function signInWithMagicLink() {
     showToast("Enter email first");
     return;
   }
-  const { error } = await supabaseClient.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.href },
-  });
-  if (error) {
-    showToast("Failed to send magic link");
-    return;
+  try {
+    // Prefer origin-only redirect to avoid including transient query params
+    const redirectTo = window.location.origin || window.location.href;
+    const resp = await supabaseClient.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: redirectTo },
+    });
+    if (resp.error) {
+      // If redirect config is invalid, try again without redirect to get clearer message
+      console.error('signInWithOtp failed', resp.error);
+      // Attempt with no redirect as a fallback
+      const fallback = await supabaseClient.auth.signInWithOtp({ email });
+      if (fallback.error) {
+        console.error('signInWithOtp fallback failed', fallback.error);
+        const msg = fallback.error.message || resp.error.message || 'Failed to send magic link';
+        showToast(msg);
+        // Provide a helpful hint for common misconfiguration
+        if (/redirect/i.test(msg) || /url/i.test(msg)) {
+          showToast('Check Supabase Auth redirect URLs include this origin: ' + (window.location.origin || window.location.href));
+        }
+        return;
+      }
+      showToast('Magic link sent (no-redirect fallback). Check your email.');
+      return;
+    }
+    showToast('Magic link sent — check your email.');
+  } catch (err) {
+    console.error('signInWithMagicLink error', err);
+    const message = err?.message || 'Failed to send magic link';
+    showToast(message);
+    if (/redirect/i.test(String(message))) {
+      showToast('Ensure this app URL is listed in Supabase Auth redirect URLs: ' + (window.location.origin || window.location.href));
+    }
   }
-  showToast("Magic link sent");
 }
 
 async function signOut() {
@@ -1780,18 +1807,99 @@ async function forceSync() {
   state.syncBusy = true;
   refs.syncState.textContent = "Syncing...";
   try {
-    await dbApi.clearTrades();
+    // Create a local backup before any destructive operation
+    const backup = await backupLocalTrades();
+    // Fetch cloud trades
     const cloudTrades = await fetchAllFromSupabase();
-    await Promise.all(cloudTrades.map((trade) => dbApi.putTrade(trade)));
-    state.trades = cloudTrades.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    // Merge strategy: preserve local changes, pull newer cloud changes, and push local-only/newer items to cloud
+    const localTrades = await dbApi.getAllTrades();
+    const localMap = Object.fromEntries(localTrades.map((t) => [t.id, t]));
+    const cloudMap = Object.fromEntries(cloudTrades.map((t) => [t.id, t]));
+
+    // Process union of ids
+    const allIds = Array.from(new Set([...Object.keys(localMap), ...Object.keys(cloudMap)]));
+
+    for (const id of allIds) {
+      const local = localMap[id] || null;
+      const cloud = cloudMap[id] || null;
+
+      if (local && cloud) {
+        const localTs = new Date(local.updated_at || local.created_at).getTime();
+        const cloudTs = new Date(cloud.updated_at || cloud.created_at).getTime();
+        if (localTs >= cloudTs) {
+          // local is newer: keep local and push to cloud to avoid losing local edits
+          await dbApi.putTrade(local);
+          try {
+            await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert({ id: local.id, user_id: state.authUser.id, trade: local, updated_at: local.updated_at }, { onConflict: "id" });
+          } catch (err) {
+            console.error('Failed to push local newer trade to cloud', err);
+          }
+        } else {
+          // cloud is newer: overwrite local
+          await dbApi.putTrade(cloud);
+        }
+      } else if (cloud && !local) {
+        // cloud-only -> insert locally
+        await dbApi.putTrade(cloud);
+      } else if (local && !cloud) {
+        // local-only -> attempt to push to cloud
+        await dbApi.putTrade(local);
+        try {
+          await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert({ id: local.id, user_id: state.authUser.id, trade: local, updated_at: local.updated_at }, { onConflict: "id" });
+        } catch (err) {
+          console.error('Failed to push local-only trade to cloud', err);
+        }
+      }
+    }
+
+    // Refresh in-memory state from local DB and render
+    const merged = await dbApi.getAllTrades();
+    state.trades = merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     renderAll();
-    showToast(`Synced - ${cloudTrades.length} trades loaded`);
+    // record last synced time
+    const nowIso = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEYS.LAST_SYNCED, nowIso);
+    refs.syncState.textContent = `Synced ${new Date(nowIso).toLocaleString()}`;
+    showToast(`Synced - ${state.trades.length} trades (merge) — backup saved`);
   } catch (error) {
     console.error(error);
     showToast("Force sync failed");
   } finally {
     state.syncBusy = false;
-    refs.syncState.textContent = "Sync idle";
+    // leave the human-readable last sync state in place
+  }
+}
+
+async function backupLocalTrades() {
+  try {
+    const rows = await dbApi.getAllTrades();
+    const ts = new Date().toISOString();
+    const payload = { timestamp: ts, count: rows.length, trades: rows };
+    try {
+      localStorage.setItem(STORAGE_KEYS.LOCAL_BACKUP, JSON.stringify(payload));
+    } catch (err) {
+      console.warn('Local backup store failed', err);
+    }
+    // Offer a downloadable backup as well
+    try {
+      const filename = `edgeforge-backup-${ts.slice(0, 19).replace(/[:T]/g, '-')}.json`;
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.warn('Download backup failed', err);
+    }
+    return payload;
+  } catch (err) {
+    console.error('Backup failed', err);
+    throw err;
   }
 }
 
