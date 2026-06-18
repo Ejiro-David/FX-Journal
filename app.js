@@ -129,6 +129,8 @@ const state = {
   formOutcome: "",
   formStrategy: "",
   editingTradeId: null,
+  activeImageTarget: "before",
+  savingTrade: false,
 };
 
 const supabaseClient = createSupabaseClient();
@@ -414,10 +416,13 @@ function bindTradeForm() {
   });
 
   refs.fScreenshotZone.addEventListener("click", () => {
+    setActiveImageTarget("before");
     // Clear value so selecting the same file still triggers a change event.
     refs.fImageInput.value = "";
     refs.fImageInput.click();
   });
+  refs.fScreenshotZone.addEventListener("focus", () => setActiveImageTarget("before"));
+  refs.fScreenshotZone.addEventListener("pointerdown", () => setActiveImageTarget("before"));
   refs.fImageInput.addEventListener("change", async () => {
     const file = refs.fImageInput.files?.[0];
     if (file) {
@@ -440,9 +445,12 @@ function bindTradeForm() {
   });
 
   refs.fAfterZone.addEventListener("click", () => {
+    setActiveImageTarget("after");
     refs.fAfterInput.value = "";
     refs.fAfterInput.click();
   });
+  refs.fAfterZone.addEventListener("focus", () => setActiveImageTarget("after"));
+  refs.fAfterZone.addEventListener("pointerdown", () => setActiveImageTarget("after"));
   refs.fAfterInput.addEventListener("change", async () => {
     const file = refs.fAfterInput.files?.[0];
     if (file) {
@@ -479,7 +487,12 @@ function bindTradeForm() {
     if (!file) {
       return;
     }
-    if (!state.formImageBlob) {
+    const target = getPasteImageTarget();
+    if (!target) {
+      showToast("Tap Before or After, then paste to replace");
+      return;
+    }
+    if (target === "before") {
       await setFormBeforeImage(file);
       return;
     }
@@ -496,10 +509,48 @@ function bindTradeForm() {
     try {
       await saveTradeForm();
     } catch (error) {
+      setSavePending(false);
       console.error(error);
       showToast("Save failed - check console");
     }
   });
+}
+
+function setSavePending(on) {
+  state.savingTrade = on;
+  refs.fSaveBtn.disabled = on;
+  refs.fSaveBtn.textContent = on ? "Saving..." : state.editingTradeId ? "Update Trade" : "Save Trade";
+}
+
+function setActiveImageTarget(target) {
+  state.activeImageTarget = target === "after" ? "after" : "before";
+  refs.fScreenshotZone.classList.toggle("is-active-target", state.activeImageTarget === "before");
+  refs.fAfterZone.classList.toggle("is-active-target", state.activeImageTarget === "after");
+}
+
+function getPasteImageTarget() {
+  const afterAvailable = !refs.fAfterWrap.hidden;
+  if (state.activeImageTarget === "after" && afterAvailable) {
+    return "after";
+  }
+  if (state.activeImageTarget === "before") {
+    return "before";
+  }
+  if (!hasFormBeforeImage()) {
+    return "before";
+  }
+  if (afterAvailable && !hasFormAfterImage()) {
+    return "after";
+  }
+  return null;
+}
+
+function hasFormBeforeImage() {
+  return Boolean(state.formImageBlob || refs.fBeforePreview.getAttribute("src"));
+}
+
+function hasFormAfterImage() {
+  return Boolean(state.formAfterImageBlob || refs.fAfterPreview.getAttribute("src"));
 }
 
 async function setFormBeforeImage(file) {
@@ -513,6 +564,7 @@ async function setFormBeforeImage(file) {
   refs.fAfterWrap.hidden = false;
   refs.fScreenshotLabel.textContent = "Before screenshot ✓";
   refs.fScreenshotHint.textContent = "Replace before screenshot";
+  setActiveImageTarget("after");
 
   const apiKey = localStorage.getItem(STORAGE_KEYS.CLAUDE_KEY);
   if (!apiKey) {
@@ -605,6 +657,7 @@ function clearFormBeforeImage() {
   refs.fScreenshotHint.textContent = "Paste, drag, or tap to add chart screenshot";
   clearFormAfterImage();
   refs.fAfterWrap.hidden = true;
+  setActiveImageTarget("before");
 }
 
 async function setFormAfterImage(file) {
@@ -615,6 +668,7 @@ async function setFormAfterImage(file) {
   state.formAfterImageUrl = URL.createObjectURL(file);
   refs.fAfterPreview.src = state.formAfterImageUrl;
   refs.fAfterPreviewWrap.hidden = false;
+  setActiveImageTarget("after");
 }
 
 function clearFormAfterImage() {
@@ -626,6 +680,9 @@ function clearFormAfterImage() {
   refs.fAfterInput.value = "";
   refs.fAfterPreviewWrap.hidden = true;
   refs.fAfterPreview.removeAttribute("src");
+  if (!refs.fAfterWrap.hidden) {
+    setActiveImageTarget("after");
+  }
 }
 
 function updateFormTwoBullets() {
@@ -742,6 +799,11 @@ function renderFormSessionPills() {
 }
 
 async function saveTradeForm() {
+  if (state.savingTrade) {
+    showToast("Save already in progress");
+    return;
+  }
+
   const pair = refs.fPair.value;
   const direction = state.formDirection;
   const entryPrice = parseNumber(refs.fEntryPrice.value);
@@ -786,6 +848,7 @@ async function saveTradeForm() {
     }
   }
 
+  setSavePending(true);
   const now = new Date();
   const existing = state.editingTradeId ? state.trades.find((trade) => trade.id === state.editingTradeId) : null;
 
@@ -890,7 +953,10 @@ async function saveTradeForm() {
   }
 
   await dbApi.putTrade(trade);
-  await syncTradeToCloud(trade);
+  void syncTradeToCloud(trade).catch((error) => {
+    console.error(error);
+    updateSyncStateHint();
+  });
 
   if (!state.authUser && !state.localOnlyReminderShown) {
     showToast("Saved locally only. Sign in with Magic Link to sync this device to cloud.");
@@ -907,11 +973,14 @@ function resetTradeForm() {
   refs.tradeForm.reset();
   refs.fLotSize.value = String(state.settings.defaultLotSize || 0.01);
 
+  state.savingTrade = false;
   state.formDirection = "";
   state.formOutcome = "";
   state.formStrategy = "";
   state.editingTradeId = null;
   state.formAiResult = null;
+  state.activeImageTarget = "before";
+  refs.fSaveBtn.disabled = false;
 
   refs.fDirectionToggle.querySelectorAll("button[data-value]").forEach((btn) => btn.classList.remove("active"));
   refs.fStrategyToggle.querySelectorAll("button").forEach((btn) => {
@@ -1053,6 +1122,7 @@ async function openTradeForEdit(trade) {
     refs.fAfterWrap.hidden = false;
     refs.fScreenshotLabel.textContent = "Before screenshot ✓";
     refs.fScreenshotHint.textContent = "Replace before screenshot";
+    setActiveImageTarget("after");
   }
 
   if (afterBlob) {
@@ -1060,6 +1130,7 @@ async function openTradeForEdit(trade) {
     refs.fAfterPreview.src = state.formAfterImageUrl;
     refs.fAfterPreviewWrap.hidden = false;
     refs.fAfterWrap.hidden = false;
+    setActiveImageTarget("after");
   }
 
   refs.fSaveBtn.textContent = "Update Trade";

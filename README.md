@@ -1,75 +1,76 @@
-# Lazy But I Love Data (FX Journal V4)
+# Edge Forge v2
 
-Private, local-first forex trade journal focused on setup integrity, confluence analytics, and clean low-friction logging.
+Private, local-first forex trade capture ledger for fast setup logging, screenshots, confluence review, and optional cloud sync.
 
-## Current status
+## Current Status
 
-- Entry + Review + History + Settings flows are live.
-- Data persists in IndexedDB (trades + image blobs).
-- App runs from a single `app.js` entry loaded directly by `index.html`.
+- History, Log Trade, and Settings screens are live.
+- Data persists locally first in IndexedDB.
+- Save/delete actions update the UI from local state first; cloud sync runs in the background.
+- Before/after screenshots can be uploaded by tap/click, drag/drop, or paste.
+- Supabase sync is optional and requires the schema in `supabase-setup.sql`.
+- Claude screenshot inference is present as an optional browser-side experiment, but manual logging remains the primary workflow.
 
-## Core features
+## Core Features
 
-- Fast `Log Trade` workflow with:
-  - auto timestamp capture
-  - optional manual timestamp override
-  - screenshot upload/paste (before/after)
+- Fast trade capture:
+  - pair, direction, entry price, lot size
+  - optional SL/TP
+  - before and after screenshots
   - strategy-aware confluence checklist
-- Dynamic confluence maps by strategy:
-  - required vs quality rules
-  - integrity + grade inferred automatically
-- Open-vs-closed trade history separation:
-  - open trades sorted to top
-  - list + gallery views
-  - inline edit flow + guarded delete flow for closed trades
-- Analytics:
-  - 60-metric catalog across performance/risk/confluence/session/market/behavior
-  - charts + tables
-  - insight reel cards
-- CSV export:
-  - all trades
-  - filtered trades
+  - sessions and notes
+- Strategy maps:
+  - SMC confluences
+  - ICC confluences
+- Two Bullets support:
+  - per-bullet lot sizing
+  - B1/B2 outcomes
+  - B2 target R:R
+  - B2 stop-to-breakeven confirmation
+- History:
+  - status, strategy, mode, and pair filters
+  - trade detail modal
+  - edit and guarded delete
+- Settings:
+  - pairs and sessions
+  - defaults
+  - backtest mode
+  - JSON/CSV export
+  - Supabase magic-link auth and force sync
 
-## Data model highlights
+## Data Model Highlights
 
+- `pair`
+- `direction`
+- `entry_price`
+- `sl_price`
+- `tp_price`
+- `lot_size`
 - `strategy`
-- `present_confluences` (array)
-- inferred fields:
-  - `confluence_score`
-  - `missing_confluences`
-  - `required_missing_count`
-  - `quality_missing_count`
-  - `setup_integrity`
-  - `setup_grade`
-- timestamps:
-  - `captured_at_utc`
-  - `captured_at_local`
-  - `timezone_offset_min`
+- `sessions`
+- `confluences`
+- `outcome`
+- `pnl`
+- `two_bullets`
+- `b1_outcome`, `b1_pnl`
+- `b2_outcome`, `b2_pnl`, `b2_target_rr`, `b2_stop_moved`
+- `before_image_id`, `after_image_id`
+- `captured_at_utc`, `captured_at_local`, `closed_at_utc`
+- `is_backtest`
+- `needs_review`
 
 ## Storage
 
-- IndexedDB DB: `lazyButDataV4`
-- Stores:
+- IndexedDB DB: `edgeForgeV2`
+- IndexedDB stores:
   - `trades`
   - `images`
-- Legacy localStorage test data wipe flag is retained for migration safety.
-- Cloud sync queue/state is stored in localStorage keys:
-  - `lazyButDataSyncQueueV1`
-  - `lazyButDataSyncCursorV1`
+- localStorage keys:
+  - `edgeForgeSettingsV2`
+  - `edgeForgeClaudeKey`
+  - `edgeForgeSyncQueueV1`
 
-## Project structure
-
-```text
-index.html
-styles.css
-app.js
-supabase-setup.sql
-README.md
-smoke.spec.js
-assets/
-```
-
-## Run locally
+## Run Locally
 
 Use any static server from the project root:
 
@@ -79,20 +80,22 @@ python3 -m http.server 5174
 
 Then open:
 
-- `http://localhost:5174/index.html`
+```text
+http://localhost:5174/index.html
+```
 
-## Smoke test
+## Smoke Test
 
-Playwright smoke spec exists at `smoke.spec.js`.
-
-If Playwright is installed in your environment:
+The Playwright smoke spec is `smoke.spec.js`.
 
 ```bash
 npx playwright test smoke.spec.js
 ```
 
+Playwright currently requires Node.js 18 or newer.
+
 ## Notes
 
-- This is intentionally local-first and private by default.
-- Supabase sync is now wired in app UI (`Settings > Cloud Sync`).
-- Run `supabase-setup.sql` in Supabase SQL Editor before using cloud sync.
+- The app is intentionally local-first.
+- Cloud sync should never block trade capture.
+- Screenshots are stored as local blobs first, then uploaded to Supabase storage when sync is available.

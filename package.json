@@ -4,7 +4,7 @@
   "description": "Private, local-first web journal with your exact logging structure.",
   "main": "app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "playwright test smoke.spec.js"
   },
   "keywords": [],
   "author": "",

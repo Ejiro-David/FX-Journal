@@ -118,7 +118,7 @@
 
 ### 3.6 BUY / SELL Buttons
 - Inactive state: `#181818` background and `#444444` text.
-- BUY active: white background, black text, weight 700.
+- BUY active: green semantic state (`#051a0e` background, `#22c55e` text, green border/glow), weight 700.
 - SELL active: `#1a0000` background, `#ff4444` text, red border and soft red glow.
 - Transition uses `all 0.2s ease` and feels weighty.
 

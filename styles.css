@@ -344,6 +344,12 @@ button:active {
   transform: scale(0.97);
 }
 
+button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+  transform: none;
+}
+
 .direction-toggle {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -406,6 +412,11 @@ button:active {
   border-color: rgba(0, 229, 255, 0.4);
   background-color: var(--cyan-bg-soft);
   animation: march 0.8s linear infinite;
+}
+
+.screenshot-zone.is-active-target {
+  border-color: rgba(0, 229, 255, 0.55);
+  box-shadow: 0 0 0 3px var(--cyan-ring);
 }
 
 @keyframes march {
