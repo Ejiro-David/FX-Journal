@@ -244,6 +244,7 @@ const refs = {
   deleteTradeBtn: document.getElementById("deleteTradeBtn"),
   wipeHistoryBtn: document.getElementById("wipeHistoryBtn"),
   closeTradeModal: document.getElementById("closeTradeModal"),
+  closeTradeTitle: document.getElementById("closeTradeTitle"),
   closeTradeCancelBtn: document.getElementById("closeTradeCancelBtn"),
   ctOutcomeGrid: document.getElementById("ctOutcomeGrid"),
   ctPnlWrap: document.getElementById("ctPnlWrap"),
