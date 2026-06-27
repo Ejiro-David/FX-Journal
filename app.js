@@ -15,7 +15,9 @@ const STORAGE_KEYS = {
   LOCAL_BACKUP: "edgeForgeLocalBackupV1",
   LAST_SYNCED: "edgeForgeLastSyncedV1",
   PENDING_DELETES: "edgeForgePendingDeletesV1",
+  DELETED_IDS: "edgeForgeDeletedIdsV1",
 };
+const MAX_TRACKED_DELETED_IDS = 5000;
 const MIN_CLOUD_JOB_INTERVAL_MS = 1200;
 
 const DEFAULT_PAIRS = ["GBPUSD", "EURUSD", "GBPJPY", "USDJPY", "XAUUSD", "GBPCAD", "EURGBP", "AUDUSD"];
@@ -136,6 +138,8 @@ const state = {
   closeOutcome: "",
   closeAfterImageBlob: null,
   closeAfterImageUrl: "",
+  formBeforeImageRemoved: false,
+  formAfterImageRemoved: false,
 };
 
 const supabaseClient = createSupabaseClient();
@@ -230,6 +234,7 @@ const refs = {
   exportLiveCsvBtn: document.getElementById("exportLiveCsvBtn"),
   exportBacktestCsvBtn: document.getElementById("exportBacktestCsvBtn"),
   forceSyncBtn: document.getElementById("forceSyncBtn"),
+  downloadBackupBtn: document.getElementById("downloadBackupBtn"),
   tradeDetailModal: document.getElementById("tradeDetailModal"),
   detailTradeId: document.getElementById("detailTradeId"),
   detailBody: document.getElementById("detailBody"),
@@ -282,6 +287,19 @@ async function init() {
   window.addEventListener("online", () => {
     void flushPendingDeletes().catch((error) => console.error(error));
     void resyncUnsyncedTrades().catch((error) => console.error(error));
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (!refs.lightbox.hidden) {
+      refs.lightbox.hidden = true;
+    } else if (!refs.closeTradeModal.hidden) {
+      closeCloseTradeModal();
+    } else if (!refs.tradeDetailModal.hidden) {
+      closeTradeDetailModal();
+    }
   });
 }
 
@@ -585,6 +603,7 @@ function hasFormAfterImage() {
 
 async function setFormBeforeImage(file) {
   state.formImageBlob = file;
+  state.formBeforeImageRemoved = false;
   if (state.formImageUrl) {
     URL.revokeObjectURL(state.formImageUrl);
   }
@@ -672,6 +691,7 @@ async function setFormBeforeImage(file) {
 
 function clearFormBeforeImage() {
   state.formImageBlob = null;
+  state.formBeforeImageRemoved = true;
   state.formAiResult = null;
   if (state.formImageUrl) {
     URL.revokeObjectURL(state.formImageUrl);
@@ -692,6 +712,7 @@ function clearFormBeforeImage() {
 
 async function setFormAfterImage(file) {
   state.formAfterImageBlob = file;
+  state.formAfterImageRemoved = false;
   if (state.formAfterImageUrl) {
     URL.revokeObjectURL(state.formAfterImageUrl);
   }
@@ -703,6 +724,7 @@ async function setFormAfterImage(file) {
 
 function clearFormAfterImage() {
   state.formAfterImageBlob = null;
+  state.formAfterImageRemoved = true;
   if (state.formAfterImageUrl) {
     URL.revokeObjectURL(state.formAfterImageUrl);
   }
@@ -882,11 +904,21 @@ async function saveTradeForm() {
   dbg("save: writing images", { hasBefore: Boolean(state.formImageBlob), hasAfter: Boolean(state.formAfterImageBlob) });
   const beforeImageId = state.formImageBlob
     ? await dbApi.saveImage(state.formImageBlob)
-    : existing?.before_image_id || null;
+    : state.formBeforeImageRemoved
+      ? null
+      : existing?.before_image_id || null;
   dbg("save: before image written", { elapsedMs: Math.round(performance.now() - saveStartedAt) });
   const afterImageId = state.formAfterImageBlob
     ? await dbApi.saveImage(state.formAfterImageBlob)
-    : existing?.after_image_id || null;
+    : state.formAfterImageRemoved
+      ? null
+      : existing?.after_image_id || null;
+  if (existing?.before_image_id && existing.before_image_id !== beforeImageId) {
+    void discardReplacedImage(existing.before_image_id);
+  }
+  if (existing?.after_image_id && existing.after_image_id !== afterImageId) {
+    void discardReplacedImage(existing.after_image_id);
+  }
   dbg("save: after image written", { elapsedMs: Math.round(performance.now() - saveStartedAt) });
 
   const sessions = Array.from(refs.fSessionPills.querySelectorAll("button.active"))
@@ -1036,14 +1068,32 @@ function resetTradeForm() {
   renderFormSessionPills();
 }
 
-function bindDetailAndLightbox() {
-  refs.closeDetailBtn.addEventListener("click", () => {
-    refs.tradeDetailModal.hidden = true;
+function revokeLightboxImages() {
+  state.lightboxImages.forEach((url) => {
+    if (url) {
+      URL.revokeObjectURL(url);
+    }
   });
+  state.lightboxImages = [];
+}
+
+function closeTradeDetailModal() {
+  refs.tradeDetailModal.hidden = true;
+  refs.lightbox.hidden = true;
+  revokeLightboxImages();
+}
+
+function bindDetailAndLightbox() {
+  refs.tradeDetailModal.addEventListener("click", (event) => {
+    if (event.target === refs.tradeDetailModal) {
+      closeTradeDetailModal();
+    }
+  });
+  refs.closeDetailBtn.addEventListener("click", closeTradeDetailModal);
 
   refs.editFromDetailBtn.addEventListener("click", () => {
-    refs.tradeDetailModal.hidden = true;
     const trade = state.trades.find((row) => row.id === state.lightboxSourceTradeId);
+    closeTradeDetailModal();
     if (trade) {
       void openTradeForEdit(trade);
     }
@@ -1051,8 +1101,8 @@ function bindDetailAndLightbox() {
 
   refs.closeTradeFromDetailBtn.addEventListener("click", () => {
     const trade = state.trades.find((row) => row.id === state.lightboxSourceTradeId);
+    closeTradeDetailModal();
     if (trade) {
-      refs.tradeDetailModal.hidden = true;
       openCloseTradeModal(trade);
     }
   });
@@ -1086,6 +1136,11 @@ function bindDetailAndLightbox() {
 }
 
 function bindCloseTradeModal() {
+  refs.closeTradeModal.addEventListener("click", (event) => {
+    if (event.target === refs.closeTradeModal) {
+      closeCloseTradeModal();
+    }
+  });
   refs.closeTradeCancelBtn.addEventListener("click", closeCloseTradeModal);
 
   refs.ctOutcomeGrid.addEventListener("click", (event) => {
@@ -1191,6 +1246,9 @@ async function saveCloseTrade() {
 
   const pnl = getPnlWithSign(state.closeOutcome, parseNumber(refs.ctPnlInput.value));
   const afterImageId = state.closeAfterImageBlob ? await dbApi.saveImage(state.closeAfterImageBlob) : trade.after_image_id;
+  if (trade.after_image_id && trade.after_image_id !== afterImageId) {
+    void discardReplacedImage(trade.after_image_id);
+  }
   const now = new Date();
 
   const updated = normalizeTrade({
@@ -1203,6 +1261,9 @@ async function saveCloseTrade() {
     updated_at: now.toISOString(),
     edit_count: Number(trade.edit_count || 0) + 1,
     synced: false,
+    // Closing always supplies an outcome, so the trade is no longer
+    // "incomplete" regardless of what needs_review was before.
+    needs_review: false,
   });
 
   const idx = state.trades.findIndex((row) => row.id === updated.id);
@@ -1291,6 +1352,11 @@ async function openTradeForEdit(trade) {
   const afterBlob = trade.after_image_id ? await getImageBlob(trade.after_image_id) : null;
 
   clearFormBeforeImage();
+  // clearFormBeforeImage marks both images as "removed" as a side effect of
+  // resetting the form - reset that here since we're loading existing state,
+  // not acting on a user removal.
+  state.formBeforeImageRemoved = false;
+  state.formAfterImageRemoved = false;
   if (beforeBlob) {
     state.formImageUrl = URL.createObjectURL(beforeBlob);
     refs.fBeforePreview.src = state.formImageUrl;
@@ -1345,12 +1411,12 @@ async function deleteTradeFromDetail() {
       await dbApi.deleteImage(trade.after_image_id);
     }
     await deleteTradeFromCloud(trade);
+    const stillPending = getPendingDeletes().some((entry) => entry.id === id);
 
     state.trades = state.trades.filter((row) => row.id !== id);
-    refs.tradeDetailModal.hidden = true;
-    refs.lightbox.hidden = true;
+    closeTradeDetailModal();
     renderHistory();
-    showToast("Trade deleted");
+    showToast(stillPending ? "Deleted locally - cloud delete pending, will retry" : "Trade deleted");
   } catch (error) {
     console.error(error);
     showToast("Delete failed");
@@ -1412,6 +1478,15 @@ function bindSettings() {
   refs.exportLiveCsvBtn.addEventListener("click", () => exportCsv((trade) => !trade.is_backtest, "edge-forge-live"));
   refs.exportBacktestCsvBtn.addEventListener("click", () => exportCsv((trade) => trade.is_backtest, "edge-forge-backtest"));
   refs.forceSyncBtn.addEventListener("click", forceSync);
+  refs.downloadBackupBtn.addEventListener("click", async () => {
+    try {
+      const payload = await backupLocalTrades({ download: true });
+      showToast(`Backup downloaded - ${payload.count} trades`);
+    } catch (error) {
+      console.error(error);
+      showToast("Backup failed");
+    }
+  });
   refs.wipeHistoryBtn.addEventListener("click", wipeHistoryWithConfirmation);
 
   refs.sendMagicLinkBtn.addEventListener("click", signInWithMagicLink);
@@ -1554,6 +1629,7 @@ async function openTradeDetail(id) {
   }
   state.lightboxSourceTradeId = trade.id;
   refs.closeTradeFromDetailBtn.hidden = !(trade.status === "open" && !trade.two_bullets);
+  revokeLightboxImages();
 
   const beforeBlob = trade.before_image_id ? await getImageBlob(trade.before_image_id) : null;
   const afterBlob = trade.after_image_id ? await getImageBlob(trade.after_image_id) : null;
@@ -2081,8 +2157,36 @@ function removePendingDelete(id) {
   setPendingDeletes(getPendingDeletes().filter((entry) => entry.id !== id));
 }
 
+// Permanent local record of every id this device has deleted. forceSync
+// consults this directly, so "don't resurrect" holds even if the cloud-side
+// tombstone update fails (e.g. missing column, RLS, offline) - it does not
+// depend on the cloud write succeeding.
+function getDeletedIds() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_IDS);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function markIdDeletedLocally(id) {
+  const ids = getDeletedIds();
+  if (ids.includes(id)) {
+    return;
+  }
+  ids.push(id);
+  if (ids.length > MAX_TRACKED_DELETED_IDS) {
+    ids.splice(0, ids.length - MAX_TRACKED_DELETED_IDS);
+  }
+  localStorage.setItem(STORAGE_KEYS.DELETED_IDS, JSON.stringify(ids));
+}
+
 // Tombstone (mark deleted_at) rather than hard-delete so other devices learn
 // about the delete on their next sync instead of resurrecting the trade.
+// This is best-effort for cross-device propagation; it is NOT what protects
+// this device from resurrecting the trade (see markIdDeletedLocally above).
 async function tombstoneTradeInCloud(id, imageIds) {
   const { error } = await supabaseClient
     .from(SUPABASE_TRADES_TABLE)
@@ -2091,6 +2195,7 @@ async function tombstoneTradeInCloud(id, imageIds) {
     .eq("user_id", state.authUser.id);
 
   if (error) {
+    dbg("tombstone update failed", { id, message: error.message, code: error.code, details: error.details, hint: error.hint });
     throw error;
   }
 
@@ -2106,12 +2211,20 @@ async function tombstoneTradeInCloud(id, imageIds) {
   }
 }
 
-async function deleteTradeFromCloud(trade) {
+// Records the delete locally (which is what actually prevents resurrection)
+// and queues the cloud-side tombstone. Does not flush by itself - callers
+// that delete many trades at once should queue them all, then flush once.
+function queueTradeDeletion(trade) {
+  markIdDeletedLocally(trade.id);
   if (!supabaseClient || (!trade.synced && !state.authUser)) {
-    // Trade was never pushed to the cloud, so there is no row to tombstone.
+    // Trade was never pushed to the cloud, so there is no cloud row to tombstone.
     return;
   }
   addPendingDelete(trade.id, [trade.before_image_id, trade.after_image_id].filter(Boolean));
+}
+
+async function deleteTradeFromCloud(trade) {
+  queueTradeDeletion(trade);
   await flushPendingDeletes();
 }
 
@@ -2147,8 +2260,24 @@ async function fetchAllFromSupabase() {
     }));
 }
 
-async function syncImageToCloud(imageId) {
-  return queueCloudJob(() => uploadImageToCloud(imageId));
+// Called when an edit swaps out a before/after screenshot for a new one, or
+// removes it outright. Without this the old blob stays in IndexedDB and the
+// old file stays in cloud storage forever, growing unbounded.
+async function discardReplacedImage(oldImageId) {
+  if (!oldImageId) {
+    return;
+  }
+  await dbApi.deleteImage(oldImageId);
+  if (!supabaseClient || !state.authUser) {
+    return;
+  }
+  try {
+    await queueCloudJob(() =>
+      supabaseClient.storage.from(SUPABASE_IMAGE_BUCKET).remove([`${state.authUser.id}/${oldImageId}.png`])
+    );
+  } catch (error) {
+    console.error("Failed to remove replaced image from cloud storage", error);
+  }
 }
 
 async function uploadImageToCloud(imageId) {
@@ -2207,6 +2336,7 @@ async function forceSync() {
     await checkClockSkew();
     await flushPendingDeletes();
     const pendingDeleteIds = new Set(getPendingDeletes().map((entry) => entry.id));
+    const deletedIds = new Set(getDeletedIds());
 
     const cloudRows = await fetchAllFromSupabase();
     const localTrades = await dbApi.getAllTrades();
@@ -2230,17 +2360,18 @@ async function forceSync() {
       });
 
     for (const id of allIds) {
-      if (pendingDeleteIds.has(id)) {
-        // Already deleted locally and queued for cloud tombstoning - leave it alone.
-        continue;
-      }
-
       const local = localMap[id] || null;
       const cloudRow = cloudMap[id] || null;
       const cloud = cloudRow?.trade || null;
 
-      if (cloudRow?.deleted_at) {
-        // Another device deleted this trade - honor that instead of resurrecting it.
+      // A trade is treated as deleted if: this device has ever deleted it
+      // (deletedIds, the authoritative local record), it is still queued for
+      // cloud tombstoning, or the cloud row carries a tombstone from another
+      // device. Any one of these is enough - never resurrect.
+      if (deletedIds.has(id) || pendingDeleteIds.has(id) || cloudRow?.deleted_at) {
+        if (cloudRow?.deleted_at) {
+          markIdDeletedLocally(id);
+        }
         if (local) {
           await dbApi.deleteTrade(id);
           if (local.before_image_id) await dbApi.deleteImage(local.before_image_id);
@@ -2354,7 +2485,7 @@ async function wipeHistoryWithConfirmation() {
   }
 
   try {
-    await backupLocalTrades();
+    await backupLocalTrades({ download: true });
     const current = await dbApi.getAllTrades();
     await dbApi.clearTrades();
     for (const trade of current) {
@@ -2364,11 +2495,20 @@ async function wipeHistoryWithConfirmation() {
       if (trade.after_image_id) {
         await dbApi.deleteImage(trade.after_image_id);
       }
-      await deleteTradeFromCloud(trade);
+      // Record every deletion locally first (this is what actually prevents
+      // resurrection) without flushing per-trade - flushing here once avoids
+      // re-walking the whole pending queue N times for N trades.
+      queueTradeDeletion(trade);
     }
     state.trades = [];
     renderAll();
-    showToast("History wiped locally and queued for cloud deletion");
+    await flushPendingDeletes();
+    const stillPending = getPendingDeletes().length;
+    showToast(
+      stillPending > 0
+        ? `History wiped locally - ${stillPending} cloud deletes still pending, will retry`
+        : "History wiped locally and from cloud"
+    );
   } catch (error) {
     console.error(error);
     showToast("Wipe failed");
@@ -2424,7 +2564,10 @@ function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function backupLocalTrades() {
+// Always snapshots to localStorage (cheap, silent, no file created). Only
+// downloads an actual file when explicitly asked - either by the user
+// clicking "Download Backup", or automatically before a destructive Wipe.
+async function backupLocalTrades({ download = false } = {}) {
   try {
     const rows = await dbApi.getAllTrades();
     const ts = new Date().toISOString();
@@ -2434,20 +2577,13 @@ async function backupLocalTrades() {
     } catch (err) {
       console.warn('Local backup store failed', err);
     }
-    // Offer a downloadable backup as well
-    try {
-      const filename = `edgeforge-backup-${ts.slice(0, 19).replace(/[:T]/g, '-')}.json`;
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.warn('Download backup failed', err);
+    if (download) {
+      try {
+        const filename = `edgeforge-backup-${ts.slice(0, 19).replace(/[:T]/g, '-')}.json`;
+        downloadFile(filename, JSON.stringify(payload, null, 2), 'application/json');
+      } catch (err) {
+        console.warn('Download backup failed', err);
+      }
     }
     return payload;
   } catch (err) {
