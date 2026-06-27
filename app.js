@@ -14,6 +14,7 @@ const STORAGE_KEYS = {
   AI_HINT_DISMISSED: "edgeForgeAiHintDismissedV1",
   LOCAL_BACKUP: "edgeForgeLocalBackupV1",
   LAST_SYNCED: "edgeForgeLastSyncedV1",
+  PENDING_DELETES: "edgeForgePendingDeletesV1",
 };
 const MIN_CLOUD_JOB_INTERVAL_MS = 1200;
 
@@ -131,6 +132,10 @@ const state = {
   editingTradeId: null,
   activeImageTarget: "before",
   savingTrade: false,
+  closeTradeId: null,
+  closeOutcome: "",
+  closeAfterImageBlob: null,
+  closeAfterImageUrl: "",
 };
 
 const supabaseClient = createSupabaseClient();
@@ -229,9 +234,22 @@ const refs = {
   detailTradeId: document.getElementById("detailTradeId"),
   detailBody: document.getElementById("detailBody"),
   closeDetailBtn: document.getElementById("closeDetailBtn"),
+  closeTradeFromDetailBtn: document.getElementById("closeTradeFromDetailBtn"),
   editFromDetailBtn: document.getElementById("editFromDetailBtn"),
   deleteTradeBtn: document.getElementById("deleteTradeBtn"),
   wipeHistoryBtn: document.getElementById("wipeHistoryBtn"),
+  closeTradeModal: document.getElementById("closeTradeModal"),
+  closeTradeCancelBtn: document.getElementById("closeTradeCancelBtn"),
+  ctOutcomeGrid: document.getElementById("ctOutcomeGrid"),
+  ctPnlWrap: document.getElementById("ctPnlWrap"),
+  ctPnlInput: document.getElementById("ctPnlInput"),
+  ctPnlPrefix: document.getElementById("ctPnlPrefix"),
+  ctAfterZone: document.getElementById("ctAfterZone"),
+  ctAfterInput: document.getElementById("ctAfterInput"),
+  ctAfterPreviewWrap: document.getElementById("ctAfterPreviewWrap"),
+  ctAfterPreview: document.getElementById("ctAfterPreview"),
+  ctClearAfter: document.getElementById("ctClearAfter"),
+  ctSaveBtn: document.getElementById("ctSaveBtn"),
   lightbox: document.getElementById("lightbox"),
   lightboxImage: document.getElementById("lightboxImage"),
   lightboxClose: document.getElementById("lightboxClose"),
@@ -249,6 +267,7 @@ async function init() {
   bindHistoryFilters();
   bindTradeForm();
   bindDetailAndLightbox();
+  bindCloseTradeModal();
   bindSettings();
   bindBacktestBanner();
   bindSessionStatusIndicator();
@@ -259,6 +278,11 @@ async function init() {
   await loadTrades();
   renderAll();
   resetTradeForm();
+
+  window.addEventListener("online", () => {
+    void flushPendingDeletes().catch((error) => console.error(error));
+    void resyncUnsyncedTrades().catch((error) => console.error(error));
+  });
 }
 
 function bindNavigation() {
@@ -337,15 +361,15 @@ function resetPills(selector) {
   }
 }
 
+// Temporary diagnostic logging for the mobile image-select and paste flows.
+// Safe to remove once we've confirmed root cause from real-device console output.
+function dbg(label, data) {
+  console.log(`[EF-DIAG ${new Date().toISOString().slice(11, 23)}] ${label}`, data ?? "");
+}
+
 function bindTradeForm() {
   refs.fPair.addEventListener("change", () => {
     refs.fPairNote.textContent = state.settings.pairNotes[refs.fPair.value] || "";
-  });
-
-  refs.fLotSize.addEventListener("blur", () => {
-    if (!refs.fLotSize.value || Number(refs.fLotSize.value) <= 0) {
-      refs.fLotSize.value = String(state.settings.defaultLotSize || 0.01);
-    }
   });
 
   refs.fDirectionToggle.addEventListener("click", (event) => {
@@ -416,6 +440,7 @@ function bindTradeForm() {
   });
 
   refs.fScreenshotZone.addEventListener("click", () => {
+    dbg("before-zone click", { activeTarget: state.activeImageTarget, inputValueBefore: refs.fImageInput.value });
     setActiveImageTarget("before");
     // Clear value so selecting the same file still triggers a change event.
     refs.fImageInput.value = "";
@@ -425,8 +450,10 @@ function bindTradeForm() {
   refs.fScreenshotZone.addEventListener("pointerdown", () => setActiveImageTarget("before"));
   refs.fImageInput.addEventListener("change", async () => {
     const file = refs.fImageInput.files?.[0];
+    dbg("before-input change fired", { hasFile: Boolean(file), name: file?.name, size: file?.size, type: file?.type });
     if (file) {
       await setFormBeforeImage(file);
+      dbg("before-input setFormBeforeImage done", { hasPreviewSrc: Boolean(refs.fBeforePreview.getAttribute("src")) });
     }
   });
 
@@ -479,8 +506,11 @@ function bindTradeForm() {
     if (!refs.screens.log.classList.contains("is-active")) {
       return;
     }
-    const item = Array.from(event.clipboardData?.items || []).find((entry) => entry.type.startsWith("image/"));
+    const allItems = Array.from(event.clipboardData?.items || []);
+    dbg("paste event", { itemCount: allItems.length, types: allItems.map((entry) => entry.type) });
+    const item = allItems.find((entry) => entry.type.startsWith("image/"));
     if (!item) {
+      dbg("paste event: no image item found - clipboard image paste is unreliable on most mobile browsers");
       return;
     }
     const file = item.getAsFile();
@@ -821,10 +851,6 @@ async function saveTradeForm() {
     showToast("Entry price must be greater than 0");
     return;
   }
-  if (!Number.isFinite(lotSize) || lotSize <= 0) {
-    showToast("Lot size must be greater than 0 lots");
-    return;
-  }
 
   const twoBullets = refs.fTwoBulletsToggle.checked;
   if (twoBullets) {
@@ -849,15 +875,19 @@ async function saveTradeForm() {
   }
 
   setSavePending(true);
+  const saveStartedAt = performance.now();
   const now = new Date();
   const existing = state.editingTradeId ? state.trades.find((trade) => trade.id === state.editingTradeId) : null;
 
+  dbg("save: writing images", { hasBefore: Boolean(state.formImageBlob), hasAfter: Boolean(state.formAfterImageBlob) });
   const beforeImageId = state.formImageBlob
     ? await dbApi.saveImage(state.formImageBlob)
     : existing?.before_image_id || null;
+  dbg("save: before image written", { elapsedMs: Math.round(performance.now() - saveStartedAt) });
   const afterImageId = state.formAfterImageBlob
     ? await dbApi.saveImage(state.formAfterImageBlob)
     : existing?.after_image_id || null;
+  dbg("save: after image written", { elapsedMs: Math.round(performance.now() - saveStartedAt) });
 
   const sessions = Array.from(refs.fSessionPills.querySelectorAll("button.active"))
     .map((btn) => btn.dataset.session || "")
@@ -939,6 +969,7 @@ async function saveTradeForm() {
     created_at: existing?.created_at || now.toISOString(),
     updated_at: now.toISOString(),
     edit_count: Number(existing?.edit_count || 0) + (existing ? 1 : 0),
+    synced: false,
   });
 
   if (existing) {
@@ -953,6 +984,7 @@ async function saveTradeForm() {
   }
 
   await dbApi.putTrade(trade);
+  dbg("save: trade row written, save complete", { elapsedMs: Math.round(performance.now() - saveStartedAt) });
   void syncTradeToCloud(trade).catch((error) => {
     console.error(error);
     updateSyncStateHint();
@@ -971,7 +1003,8 @@ async function saveTradeForm() {
 
 function resetTradeForm() {
   refs.tradeForm.reset();
-  refs.fLotSize.value = String(state.settings.defaultLotSize || 0.01);
+  refs.fLotSize.value = "";
+  refs.fLotSize.placeholder = `e.g. ${state.settings.defaultLotSize || 0.01}`;
 
   state.savingTrade = false;
   state.formDirection = "";
@@ -1016,6 +1049,14 @@ function bindDetailAndLightbox() {
     }
   });
 
+  refs.closeTradeFromDetailBtn.addEventListener("click", () => {
+    const trade = state.trades.find((row) => row.id === state.lightboxSourceTradeId);
+    if (trade) {
+      refs.tradeDetailModal.hidden = true;
+      openCloseTradeModal(trade);
+    }
+  });
+
   refs.deleteTradeBtn.addEventListener("click", () => {
     void deleteTradeFromDetail();
   });
@@ -1044,6 +1085,141 @@ function bindDetailAndLightbox() {
   });
 }
 
+function bindCloseTradeModal() {
+  refs.closeTradeCancelBtn.addEventListener("click", closeCloseTradeModal);
+
+  refs.ctOutcomeGrid.addEventListener("click", (event) => {
+    const btn = event.target.closest("button[data-outcome]");
+    if (!btn) {
+      return;
+    }
+    state.closeOutcome = btn.dataset.outcome || "";
+    refs.ctOutcomeGrid.querySelectorAll("button").forEach((node) => {
+      node.classList.toggle("active", node === btn);
+    });
+    refs.ctPnlWrap.hidden = !state.closeOutcome;
+    if (state.closeOutcome === "breakeven") {
+      refs.ctPnlInput.value = "0";
+      refs.ctPnlInput.disabled = true;
+      refs.ctPnlPrefix.textContent = "";
+    } else {
+      refs.ctPnlInput.disabled = false;
+      refs.ctPnlPrefix.textContent = state.closeOutcome === "loss" ? "-" : "+";
+      refs.ctPnlPrefix.style.color = state.closeOutcome === "loss" ? "var(--color-loss)" : "var(--color-win)";
+    }
+  });
+
+  refs.ctAfterZone.addEventListener("click", () => {
+    refs.ctAfterInput.value = "";
+    refs.ctAfterInput.click();
+  });
+  refs.ctAfterZone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    refs.ctAfterZone.classList.add("drag-over");
+  });
+  refs.ctAfterZone.addEventListener("dragleave", () => refs.ctAfterZone.classList.remove("drag-over"));
+  refs.ctAfterZone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    refs.ctAfterZone.classList.remove("drag-over");
+    const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type.startsWith("image/"));
+    if (file) {
+      setCloseAfterImage(file);
+    }
+  });
+  refs.ctAfterInput.addEventListener("change", () => {
+    const file = refs.ctAfterInput.files?.[0];
+    if (file) {
+      setCloseAfterImage(file);
+    }
+  });
+  refs.ctClearAfter.addEventListener("click", clearCloseAfterImage);
+
+  refs.ctSaveBtn.addEventListener("click", () => {
+    void saveCloseTrade();
+  });
+}
+
+function setCloseAfterImage(file) {
+  state.closeAfterImageBlob = file;
+  if (state.closeAfterImageUrl) {
+    URL.revokeObjectURL(state.closeAfterImageUrl);
+  }
+  state.closeAfterImageUrl = URL.createObjectURL(file);
+  refs.ctAfterPreview.src = state.closeAfterImageUrl;
+  refs.ctAfterPreviewWrap.hidden = false;
+}
+
+function clearCloseAfterImage() {
+  state.closeAfterImageBlob = null;
+  if (state.closeAfterImageUrl) {
+    URL.revokeObjectURL(state.closeAfterImageUrl);
+  }
+  state.closeAfterImageUrl = "";
+  refs.ctAfterInput.value = "";
+  refs.ctAfterPreviewWrap.hidden = true;
+  refs.ctAfterPreview.removeAttribute("src");
+}
+
+function openCloseTradeModal(trade) {
+  state.closeTradeId = trade.id;
+  state.closeOutcome = "";
+  clearCloseAfterImage();
+  refs.ctOutcomeGrid.querySelectorAll("button").forEach((node) => node.classList.remove("active"));
+  refs.ctPnlWrap.hidden = true;
+  refs.ctPnlInput.value = "";
+  refs.ctPnlInput.disabled = false;
+  refs.closeTradeTitle.textContent = `Close Trade · ${trade.trade_id} - ${trade.pair}`;
+  refs.closeTradeModal.hidden = false;
+}
+
+function closeCloseTradeModal() {
+  refs.closeTradeModal.hidden = true;
+  clearCloseAfterImage();
+  state.closeTradeId = null;
+}
+
+async function saveCloseTrade() {
+  const trade = state.trades.find((row) => row.id === state.closeTradeId);
+  if (!trade) {
+    closeCloseTradeModal();
+    return;
+  }
+  if (!state.closeOutcome) {
+    showToast("Pick an outcome");
+    return;
+  }
+
+  const pnl = getPnlWithSign(state.closeOutcome, parseNumber(refs.ctPnlInput.value));
+  const afterImageId = state.closeAfterImageBlob ? await dbApi.saveImage(state.closeAfterImageBlob) : trade.after_image_id;
+  const now = new Date();
+
+  const updated = normalizeTrade({
+    ...trade,
+    outcome: state.closeOutcome,
+    pnl: Number.isFinite(pnl) ? pnl : null,
+    after_image_id: afterImageId,
+    status: "closed",
+    closed_at_utc: now.toISOString(),
+    updated_at: now.toISOString(),
+    edit_count: Number(trade.edit_count || 0) + 1,
+    synced: false,
+  });
+
+  const idx = state.trades.findIndex((row) => row.id === updated.id);
+  if (idx >= 0) {
+    state.trades[idx] = updated;
+  }
+  await dbApi.putTrade(updated);
+  void syncTradeToCloud(updated).catch((error) => {
+    console.error(error);
+    updateSyncStateHint();
+  });
+
+  closeCloseTradeModal();
+  renderAll();
+  showToast(`Closed ${updated.trade_id} · ${outcomeLabel(updated.outcome)}`);
+}
+
 async function openTradeForEdit(trade) {
   state.editingTradeId = trade.id;
   state.formStrategy = trade.strategy || "";
@@ -1052,7 +1228,7 @@ async function openTradeForEdit(trade) {
 
   refs.fPair.value = trade.pair || "";
   refs.fPairNote.textContent = state.settings.pairNotes[trade.pair] || "";
-  refs.fLotSize.value = String(trade.lot_size || 0.01);
+  refs.fLotSize.value = Number.isFinite(trade.lot_size) ? String(trade.lot_size) : "";
   refs.fEntryPrice.value = trade.entry_price ? String(trade.entry_price) : "";
   refs.fSlPrice.value = trade.sl_price ? String(trade.sl_price) : "";
   refs.fTpPrice.value = trade.tp_price ? String(trade.tp_price) : "";
@@ -1288,6 +1464,7 @@ function renderAll() {
   renderHistory();
   renderSettings();
   renderTradeCountHint();
+  refs.fLotSize.placeholder = `e.g. ${state.settings.defaultLotSize || 0.01}`;
   refs.backtestBanner.hidden = !state.settings.backtestMode;
 }
 
@@ -1343,14 +1520,29 @@ function renderHistory() {
       const present = (STRATEGY_CONFLUENCES[trade.strategy] || []).filter((item) => trade.confluences?.[item.key]).length;
       const sessions = trade.sessions.join("/") || "-";
       const pnlClass = !Number.isFinite(trade.pnl) || trade.status === "open" ? "open" : trade.pnl >= 0 ? "win" : "loss";
-      return `<article class=\"history-card\" data-trade-id=\"${escapeHtmlAttr(trade.id)}\" data-outcome=\"${escapeHtmlAttr(trade.outcome || "") || "open"}\">\n        <div class=\"history-top\">\n          <div>\n            <div class=\"trade-id\">${escapeHtml(trade.trade_id)}</div>\n            <div class=\"pair-name\">${escapeHtml(trade.pair)} ${escapeHtml((trade.direction || "").toUpperCase())} <span class=\"price\">@ ${formatPrice(trade.entry_price)}</span></div>\n            <div class=\"hint\">${escapeHtml(trade.captured_at_local)}</div>\n          </div>\n          <div class=\"badge-row\">\n            <span class=\"badge ${trade.direction}\">${escapeHtml(trade.direction || "")}</span>\n            <span class=\"badge ${trade.outcome || "open"}\">${escapeHtml(outcomeLabel(trade.outcome))}</span>\n            ${trade.two_bullets ? "<span class='badge ghost'>2B</span>" : ""}\n            ${trade.is_backtest ? "<span class='badge ghost'>BT</span>" : ""}\n            ${trade.needs_review ? "<span class='badge incomplete'>Incomplete</span>" : ""}\n          </div>\n        </div>\n        <div class=\"history-bottom\">\n          <div class=\"hint\">${escapeHtml(trade.strategy)} · ${escapeHtml(sessions)} · ${present}/${total} confluences</div>\n          <div class=\"pnl-value ${pnlClass}\">${formatPnlForCard(trade)}</div>\n        </div>\n      </article>`;
+      const canQuickClose = trade.status === "open" && !trade.two_bullets;
+      return `<article class=\"history-card\" data-trade-id=\"${escapeHtmlAttr(trade.id)}\" data-outcome=\"${escapeHtmlAttr(trade.outcome || "") || "open"}\">\n        <div class=\"history-top\">\n          <div>\n            <div class=\"trade-id\">${escapeHtml(trade.trade_id)}</div>\n            <div class=\"pair-name\">${escapeHtml(trade.pair)} ${escapeHtml((trade.direction || "").toUpperCase())} <span class=\"price\">@ ${formatPrice(trade.entry_price)}</span></div>\n            <div class=\"hint\">${escapeHtml(trade.captured_at_local)}</div>\n          </div>\n          <div class=\"badge-row\">\n            <span class=\"badge ${trade.direction}\">${escapeHtml(trade.direction || "")}</span>\n            <span class=\"badge ${trade.outcome || "open"}\">${escapeHtml(outcomeLabel(trade.outcome))}</span>\n            ${trade.two_bullets ? "<span class='badge ghost'>2B</span>" : ""}\n            ${trade.is_backtest ? "<span class='badge ghost'>BT</span>" : ""}\n            ${trade.needs_review ? "<span class='badge incomplete'>Incomplete</span>" : ""}\n          </div>\n        </div>\n        <div class=\"history-bottom\">\n          <div class=\"hint\">${escapeHtml(trade.strategy)} · ${escapeHtml(sessions)} · ${present}/${total} confluences</div>\n          ${canQuickClose ? `<button class=\"close-trade-btn\" data-quick-close=\"${escapeHtmlAttr(trade.id)}\" type=\"button\">Close</button>` : `<div class=\"pnl-value ${pnlClass}\">${formatPnlForCard(trade)}</div>`}\n        </div>\n      </article>`;
     })
     .join("");
 
   refs.historyList.querySelectorAll(".history-card").forEach((card) => {
-    card.addEventListener("click", () => {
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("[data-quick-close]")) {
+        return;
+      }
       const id = card.getAttribute("data-trade-id") || "";
       void openTradeDetail(id);
+    });
+  });
+
+  refs.historyList.querySelectorAll("[data-quick-close]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const id = btn.getAttribute("data-quick-close") || "";
+      const trade = state.trades.find((row) => row.id === id);
+      if (trade) {
+        openCloseTradeModal(trade);
+      }
     });
   });
 }
@@ -1361,6 +1553,7 @@ async function openTradeDetail(id) {
     return;
   }
   state.lightboxSourceTradeId = trade.id;
+  refs.closeTradeFromDetailBtn.hidden = !(trade.status === "open" && !trade.two_bullets);
 
   const beforeBlob = trade.before_image_id ? await getImageBlob(trade.before_image_id) : null;
   const afterBlob = trade.after_image_id ? await getImageBlob(trade.after_image_id) : null;
@@ -1459,7 +1652,7 @@ function normalizeTrade(raw) {
     trade_id: raw?.trade_id || "",
     pair: String(raw?.pair || "GBPUSD").toUpperCase(),
     direction: normalizeDirection(raw?.direction),
-    lot_size: parseNumber(raw?.lot_size) || 0.01,
+    lot_size: parseNumber(raw?.lot_size),
     entry_price: parseNumber(raw?.entry_price),
     sl_price: parseNumber(raw?.sl_price),
     tp_price: parseNumber(raw?.tp_price),
@@ -1490,6 +1683,7 @@ function normalizeTrade(raw) {
     created_at: raw?.created_at || now,
     updated_at: raw?.updated_at || now,
     edit_count: Number(raw?.edit_count || 0),
+    synced: Boolean(raw?.synced),
   };
 
   if (raw?.confluences && typeof raw.confluences === "object") {
@@ -1722,9 +1916,18 @@ async function setupAuth() {
   const { data } = await supabaseClient.auth.getSession();
   state.authUser = data?.session?.user || null;
   renderAuthState();
+  if (state.authUser) {
+    void flushPendingDeletes().catch((error) => console.error(error));
+    void resyncUnsyncedTrades().catch((error) => console.error(error));
+  }
   supabaseClient.auth.onAuthStateChange((_event, session) => {
+    const wasSignedIn = Boolean(state.authUser);
     state.authUser = session?.user || null;
     renderAuthState();
+    if (state.authUser && !wasSignedIn) {
+      void flushPendingDeletes().catch((error) => console.error(error));
+      void resyncUnsyncedTrades().catch((error) => console.error(error));
+    }
   });
 }
 
@@ -1803,7 +2006,7 @@ async function syncTradeToCloud(trade) {
     await queueCloudJob(async () => {
       await uploadImageToCloud(trade.before_image_id);
       await uploadImageToCloud(trade.after_image_id);
-      const payload = normalizeTrade(trade);
+      const payload = normalizeTrade({ ...trade, synced: true });
       const { error } = await supabaseClient
         .from(SUPABASE_TRADES_TABLE)
         .upsert(
@@ -1812,56 +2015,136 @@ async function syncTradeToCloud(trade) {
             user_id: state.authUser.id,
             trade: payload,
             updated_at: payload.updated_at,
+            deleted_at: null,
           },
           { onConflict: "id" }
         );
       if (error) {
         console.error(error);
+        return;
       }
+      await markTradeSynced(payload.id);
     });
   } catch (error) {
     console.error(error);
   }
 }
 
-async function deleteTradeFromCloud(trade) {
+async function markTradeSynced(id) {
+  const stored = await dbApi.getTrade(id);
+  if (!stored) {
+    return;
+  }
+  await dbApi.putTrade({ ...stored, synced: true });
+  const idx = state.trades.findIndex((row) => row.id === id);
+  if (idx >= 0) {
+    state.trades[idx] = { ...state.trades[idx], synced: true };
+  }
+  updateSyncStateHint();
+}
+
+async function resyncUnsyncedTrades() {
   if (!supabaseClient || !state.authUser || !navigator.onLine) {
     return;
   }
-  await queueCloudJob(async () => {
-    const { error } = await supabaseClient
-      .from(SUPABASE_TRADES_TABLE)
-      .delete()
-      .eq("id", trade.id)
-      .eq("user_id", state.authUser.id);
+  const rows = await dbApi.getAllTrades();
+  const pending = rows.filter((row) => !row.synced);
+  for (const row of pending) {
+    void syncTradeToCloud(row).catch((error) => console.error(error));
+  }
+}
 
-    if (error) {
-      console.error(error);
+function getPendingDeletes() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.PENDING_DELETES);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function setPendingDeletes(ids) {
+  localStorage.setItem(STORAGE_KEYS.PENDING_DELETES, JSON.stringify(ids));
+}
+
+function addPendingDelete(id, imageIds) {
+  const pending = getPendingDeletes();
+  if (pending.some((entry) => entry.id === id)) {
+    return;
+  }
+  pending.push({ id, imageIds: imageIds || [] });
+  setPendingDeletes(pending);
+}
+
+function removePendingDelete(id) {
+  setPendingDeletes(getPendingDeletes().filter((entry) => entry.id !== id));
+}
+
+// Tombstone (mark deleted_at) rather than hard-delete so other devices learn
+// about the delete on their next sync instead of resurrecting the trade.
+async function tombstoneTradeInCloud(id, imageIds) {
+  const { error } = await supabaseClient
+    .from(SUPABASE_TRADES_TABLE)
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("user_id", state.authUser.id);
+
+  if (error) {
+    throw error;
+  }
+
+  const filePaths = (imageIds || [])
+    .filter(Boolean)
+    .map((imageId) => `${state.authUser.id}/${imageId}.png`);
+
+  if (filePaths.length) {
+    const removeResult = await supabaseClient.storage.from(SUPABASE_IMAGE_BUCKET).remove(filePaths);
+    if (removeResult.error) {
+      console.error(removeResult.error);
     }
+  }
+}
 
-    const filePaths = [trade.before_image_id, trade.after_image_id]
-      .filter(Boolean)
-      .map((imageId) => `${state.authUser.id}/${imageId}.png`);
+async function deleteTradeFromCloud(trade) {
+  if (!supabaseClient || (!trade.synced && !state.authUser)) {
+    // Trade was never pushed to the cloud, so there is no row to tombstone.
+    return;
+  }
+  addPendingDelete(trade.id, [trade.before_image_id, trade.after_image_id].filter(Boolean));
+  await flushPendingDeletes();
+}
 
-    if (filePaths.length) {
-      const removeResult = await supabaseClient.storage.from(SUPABASE_IMAGE_BUCKET).remove(filePaths);
-      if (removeResult.error) {
-        console.error(removeResult.error);
-      }
+async function flushPendingDeletes() {
+  if (!supabaseClient || !state.authUser || !navigator.onLine) {
+    return;
+  }
+  const pending = getPendingDeletes();
+  for (const entry of pending) {
+    try {
+      await queueCloudJob(() => tombstoneTradeInCloud(entry.id, entry.imageIds));
+      removePendingDelete(entry.id);
+    } catch (error) {
+      console.error("Failed to tombstone deleted trade", error);
     }
-  });
+  }
 }
 
 async function fetchAllFromSupabase() {
   const { data, error } = await supabaseClient
     .from(SUPABASE_TRADES_TABLE)
-    .select("trade")
+    .select("trade, deleted_at")
     .eq("user_id", state.authUser.id)
     .order("updated_at", { ascending: false });
   if (error) {
     throw error;
   }
-  return (data || []).map((row) => normalizeTrade(row.trade));
+  return (data || [])
+    .filter((row) => row.trade)
+    .map((row) => ({
+      deleted_at: row.deleted_at || null,
+      trade: normalizeTrade(row.trade),
+    }));
 }
 
 async function syncImageToCloud(imageId) {
@@ -1921,31 +2204,59 @@ async function forceSync() {
   refs.syncState.textContent = "Syncing...";
   try {
     await backupLocalTrades();
-    const cloudTrades = await fetchAllFromSupabase();
+    await checkClockSkew();
+    await flushPendingDeletes();
+    const pendingDeleteIds = new Set(getPendingDeletes().map((entry) => entry.id));
+
+    const cloudRows = await fetchAllFromSupabase();
     const localTrades = await dbApi.getAllTrades();
     const localMap = Object.fromEntries(localTrades.map((t) => [t.id, t]));
-    const cloudMap = Object.fromEntries(cloudTrades.map((t) => [t.id, t]));
+    const cloudMap = Object.fromEntries(cloudRows.map((row) => [row.trade.id, row]));
     const allIds = Array.from(new Set([...Object.keys(localMap), ...Object.keys(cloudMap)]));
 
+    const pushLocalToCloud = (local) =>
+      queueCloudJob(async () => {
+        try {
+          await uploadImageToCloud(local.before_image_id);
+          await uploadImageToCloud(local.after_image_id);
+          await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert(
+            { id: local.id, user_id: state.authUser.id, trade: { ...local, synced: true }, updated_at: local.updated_at, deleted_at: null },
+            { onConflict: "id" }
+          );
+          await markTradeSynced(local.id);
+        } catch (err) {
+          console.error("Failed to push trade to cloud", err);
+        }
+      });
+
     for (const id of allIds) {
+      if (pendingDeleteIds.has(id)) {
+        // Already deleted locally and queued for cloud tombstoning - leave it alone.
+        continue;
+      }
+
       const local = localMap[id] || null;
-      const cloud = cloudMap[id] || null;
+      const cloudRow = cloudMap[id] || null;
+      const cloud = cloudRow?.trade || null;
+
+      if (cloudRow?.deleted_at) {
+        // Another device deleted this trade - honor that instead of resurrecting it.
+        if (local) {
+          await dbApi.deleteTrade(id);
+          if (local.before_image_id) await dbApi.deleteImage(local.before_image_id);
+          if (local.after_image_id) await dbApi.deleteImage(local.after_image_id);
+        }
+        continue;
+      }
 
       if (local && cloud) {
         const localTs = new Date(local.updated_at || local.created_at).getTime();
         const cloudTs = new Date(cloud.updated_at || cloud.created_at).getTime();
         if (localTs >= cloudTs) {
           await dbApi.putTrade(local);
-          await queueCloudJob(async () => {
-            try {
-              await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert(
-                { id: local.id, user_id: state.authUser.id, trade: local, updated_at: local.updated_at },
-                { onConflict: "id" }
-              );
-            } catch (err) {
-              console.error('Failed to push local newer trade to cloud', err);
-            }
-          });
+          if (!local.synced) {
+            await pushLocalToCloud(local);
+          }
         } else {
           await dbApi.putTrade(cloud);
         }
@@ -1953,21 +2264,12 @@ async function forceSync() {
         await dbApi.putTrade(cloud);
       } else if (local && !cloud) {
         await dbApi.putTrade(local);
-        await queueCloudJob(async () => {
-          try {
-            await supabaseClient.from(SUPABASE_TRADES_TABLE).upsert(
-              { id: local.id, user_id: state.authUser.id, trade: local, updated_at: local.updated_at },
-              { onConflict: "id" }
-            );
-          } catch (err) {
-            console.error('Failed to push local-only trade to cloud', err);
-          }
-        });
+        await pushLocalToCloud(local);
       }
     }
 
     const merged = await dbApi.getAllTrades();
-    state.trades = merged.map(normalizeTrade).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    state.trades = dedupeTradeIds(merged.map(normalizeTrade)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     renderAll();
     const nowIso = new Date().toISOString();
     localStorage.setItem(STORAGE_KEYS.LAST_SYNCED, nowIso);
@@ -1980,6 +2282,58 @@ async function forceSync() {
     state.syncBusy = false;
     updateSyncStateHint();
   }
+}
+
+async function checkClockSkew() {
+  try {
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/health`, {
+      headers: { apikey: SUPABASE_ANON_KEY },
+      cache: "no-store",
+    });
+    const serverDateHeader = response.headers.get("date");
+    if (!serverDateHeader) {
+      return;
+    }
+    const serverTime = new Date(serverDateHeader).getTime();
+    const skewMs = Math.abs(Date.now() - serverTime);
+    if (skewMs > 5 * 60 * 1000) {
+      showToast("Device clock looks off by more than 5 minutes — fix it to avoid sync conflicts");
+    }
+  } catch (_error) {
+    // Non-critical: skip the check if it fails (e.g. offline).
+  }
+}
+
+// Trade IDs (e.g. "GU-003") are generated client-side and can collide when two
+// devices create trades for the same pair while offline. Keep the UUID `id`
+// authoritative and just relabel the display id for any duplicates after merge.
+function dedupeTradeIds(trades) {
+  const seen = new Map();
+  const sorted = [...trades].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  sorted.forEach((trade) => {
+    if (!trade.trade_id) {
+      return;
+    }
+    if (!seen.has(trade.trade_id)) {
+      seen.set(trade.trade_id, trade.id);
+      return;
+    }
+    if (seen.get(trade.trade_id) === trade.id) {
+      return;
+    }
+    const base = trade.trade_id;
+    let suffix = 2;
+    let candidate = `${base}b`;
+    while (seen.has(candidate)) {
+      suffix += 1;
+      candidate = `${base}b${suffix}`;
+    }
+    trade.trade_id = candidate;
+    trade.synced = false;
+    seen.set(candidate, trade.id);
+    void dbApi.putTrade(trade);
+  });
+  return trades;
 }
 
 async function wipeHistoryWithConfirmation() {
@@ -2010,10 +2364,11 @@ async function wipeHistoryWithConfirmation() {
       if (trade.after_image_id) {
         await dbApi.deleteImage(trade.after_image_id);
       }
+      await deleteTradeFromCloud(trade);
     }
     state.trades = [];
     renderAll();
-    showToast("History wiped locally");
+    showToast("History wiped locally and queued for cloud deletion");
   } catch (error) {
     console.error(error);
     showToast("Wipe failed");
@@ -2052,8 +2407,16 @@ function updateSyncStateHint() {
     refs.syncState.textContent = `Local-only mode · ${state.trades.length} unsynced trade${state.trades.length === 1 ? "" : "s"}`;
     return;
   }
+  const unsyncedCount = state.trades.filter((trade) => !trade.synced).length;
+  const pendingDeleteCount = getPendingDeletes().length;
   const lastSynced = localStorage.getItem(STORAGE_KEYS.LAST_SYNCED);
-  const syncText = lastSynced ? `Last synced ${new Date(lastSynced).toLocaleString()}` : "Sync idle";
+  let syncText = lastSynced ? `Last synced ${new Date(lastSynced).toLocaleString()}` : "Sync idle";
+  if (unsyncedCount > 0) {
+    syncText += ` · ${unsyncedCount} pending upload`;
+  }
+  if (pendingDeleteCount > 0) {
+    syncText += ` · ${pendingDeleteCount} pending delete`;
+  }
   refs.syncState.textContent = state.cloudQueueSize > 0 ? `${syncText} · Queue ${state.cloudQueueSize}` : syncText;
 }
 
@@ -2129,6 +2492,7 @@ function exportCsv(predicate, name) {
     "note",
     ...confluenceCols,
   ];
+  const numericCols = new Set(["entry_price", "lot_size", "pnl"]);
 
   const lines = [cols.join(",")];
   state.trades.filter(predicate).forEach((trade) => {
@@ -2141,6 +2505,9 @@ function exportCsv(predicate, name) {
           value = trade.is_backtest ? "TRUE" : "FALSE";
         } else if (confluenceCols.includes(col)) {
           value = trade.confluences?.[col] ? "TRUE" : "FALSE";
+        }
+        if (numericCols.has(col) && Number.isFinite(value)) {
+          return String(value);
         }
         return `"${String(value ?? "").replace(/"/g, '""')}"`;
       })
@@ -2181,6 +2548,12 @@ function createDbApi() {
           db.createObjectStore(IMAGE_STORE, { keyPath: "id" });
         }
       };
+      request.onblocked = () => {
+        console.warn("IndexedDB open blocked - close other tabs of this app and reload");
+        if (typeof showToast === "function") {
+          showToast("Close other open tabs of this app, then reload");
+        }
+      };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error("DB open failed"));
     });
@@ -2209,6 +2582,13 @@ function createDbApi() {
       const rows = await toPromise(tx.objectStore(TRADE_STORE).getAll());
       await done(tx);
       return rows || [];
+    },
+    async getTrade(id) {
+      const db = await openDb();
+      const tx = db.transaction(TRADE_STORE, "readonly");
+      const row = await toPromise(tx.objectStore(TRADE_STORE).get(id));
+      await done(tx);
+      return row || null;
     },
     async putTrade(trade) {
       const db = await openDb();
