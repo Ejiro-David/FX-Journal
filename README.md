@@ -15,6 +15,7 @@ Private, local-first forex trade capture ledger for fast setup logging, screensh
 
 - Fast trade capture:
   - pair, direction, entry price, lot size
+  - required opening emotional-journal entry
   - optional SL/TP
   - before and after screenshots
   - strategy-aware confluence checklist
@@ -29,6 +30,9 @@ Private, local-first forex trade capture ledger for fast setup logging, screensh
   - B2 stop-to-breakeven confirmation
 - History:
   - status, strategy, mode, and pair filters
+  - required closing journal and process score
+  - weekly process adherence and week P&L from a saved week-start balance
+  - non-blocking day-complete state after two wins or two losses
   - trade detail modal
   - edit and guarded delete
 - Settings:
@@ -55,6 +59,8 @@ Private, local-first forex trade capture ledger for fast setup logging, screensh
 - `b1_outcome`, `b1_pnl`
 - `b2_outcome`, `b2_pnl`, `b2_target_rr`, `b2_stop_moved`
 - `before_image_id`, `after_image_id`
+- `process_clean`
+- `mood_open`, `mood_close`
 - `captured_at_utc`, `captured_at_local`, `closed_at_utc`
 - `is_backtest`
 - `needs_review`
@@ -99,3 +105,4 @@ Playwright currently requires Node.js 18 or newer.
 - The app is intentionally local-first.
 - Cloud sync should never block trade capture.
 - Screenshots are stored as local blobs first, then uploaded to Supabase storage when sync is available.
+- Process stats use live trades closed from local Monday 00:00 through the current time; legacy unscored trades are excluded from the adherence denominator.

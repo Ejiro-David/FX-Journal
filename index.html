@@ -42,8 +42,40 @@
               <p class="muted">Capture ledger. Fast scan. Fast review.</p>
               <p id="tradeCountHint" class="hint">0 trades recorded</p>
             </div>
-            <div id="sessionStatusPill" class="session-pill">● Off-Session</div>
+            <div class="history-status-stack">
+              <div id="sessionStatusPill" class="session-pill">● Off-Session</div>
+              <div id="todayTally" class="today-tally">Today: 0 wins / 0 losses</div>
+              <div id="circuitBreakerState" class="circuit-breaker-state" hidden>Circuit breaker - day complete</div>
+            </div>
           </header>
+
+          <article class="process-stats-card" aria-labelledby="processStatsTitle">
+            <div class="process-stats-head">
+              <div>
+                <h2 id="processStatsTitle">Process This Week</h2>
+                <p id="processWeekRange" class="hint"></p>
+              </div>
+            </div>
+            <div class="process-stats-grid">
+              <div class="process-stat">
+                <span class="process-stat-label">Adherence</span>
+                <strong id="processAdherence">-</strong>
+                <span id="processScored" class="hint">0 scored / 0 closed</span>
+              </div>
+              <div class="process-stat">
+                <span class="process-stat-label">Week P&amp;L</span>
+                <strong id="weekPnl">-</strong>
+                <span id="weekPnlHint" class="hint">Set week-start balance</span>
+              </div>
+              <label class="week-balance-field">
+                <span>Week-start balance</span>
+                <div class="week-balance-control">
+                  <input id="weekBalanceInput" type="number" min="0" step="0.01" inputmode="decimal" placeholder="e.g. 10000" />
+                  <button id="saveWeekBalanceBtn" class="btn btn-small" type="button">Save</button>
+                </div>
+              </label>
+            </div>
+          </article>
 
           <div class="history-filters">
             <button class="pill active" data-filter-status="all" type="button">All</button>
@@ -110,6 +142,11 @@
                 <label class="field field-inline-label">
                   <span>Take profit <span class="hint">(optional)</span></span>
                   <input id="fTpPrice" type="number" step="0.00001" placeholder="TP price" />
+                </label>
+
+                <label class="field required-journal-field">
+                  Opening journal
+                  <textarea id="fMoodOpen" rows="3" placeholder="How are you feeling right now? Why this trade?" required></textarea>
                 </label>
 
                 <label class="field">
@@ -249,6 +286,20 @@
                     <input id="fPnlInput" type="number" step="0.01" />
                   </div>
                 </label>
+
+                <div id="fCloseJournalWrap" class="close-journal-fields" hidden>
+                  <label class="field required-journal-field">
+                    Closing journal
+                    <textarea id="fMoodClose" rows="3" placeholder="How did that feel? Did you follow your plan, and if not, what happened?"></textarea>
+                  </label>
+                  <div class="field">
+                    <div>Followed all rules?</div>
+                    <div id="fProcessToggle" class="process-toggle" role="group" aria-label="Followed all rules">
+                      <button data-process="true" type="button">&#10003; Yes</button>
+                      <button data-process="false" type="button">&#10007; No</button>
+                    </div>
+                  </div>
+                </div>
 
                 <label class="field">
                   Note
@@ -405,6 +456,17 @@
               <input id="ctPnlInput" type="number" step="0.01" />
             </div>
           </label>
+          <label class="field required-journal-field">
+            Closing journal
+            <textarea id="ctMoodClose" rows="4" placeholder="How did that feel? Did you follow your plan, and if not, what happened?"></textarea>
+          </label>
+          <div class="field">
+            <div>Followed all rules?</div>
+            <div id="ctProcessToggle" class="process-toggle" role="group" aria-label="Followed all rules">
+              <button data-process="true" type="button">&#10003; Yes</button>
+              <button data-process="false" type="button">&#10007; No</button>
+            </div>
+          </div>
           <div class="field">
             <span>After screenshot <span class="hint">(optional)</span></span>
             <div id="ctAfterZone" class="screenshot-zone" tabindex="0">

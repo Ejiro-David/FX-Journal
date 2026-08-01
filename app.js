@@ -49,6 +49,7 @@ const DEFAULT_SETTINGS = {
   defaultStrategy: "SMC",
   defaultSession: "London",
   backtestMode: false,
+  weekStartBalances: {},
 };
 
 const STRATEGY_CONFLUENCES = {
@@ -131,11 +132,14 @@ const state = {
   formDirection: "",
   formOutcome: "",
   formStrategy: "",
+  formProcessClean: null,
   editingTradeId: null,
   activeImageTarget: "before",
   savingTrade: false,
   closeTradeId: null,
   closeOutcome: "",
+  closeProcessClean: null,
+  closeSaving: false,
   closeAfterImageBlob: null,
   closeAfterImageUrl: "",
   formBeforeImageRemoved: false,
@@ -154,6 +158,15 @@ const refs = {
   historyList: document.getElementById("historyList"),
   filterPair: document.getElementById("filterPair"),
   sessionStatusPill: document.getElementById("sessionStatusPill"),
+  todayTally: document.getElementById("todayTally"),
+  circuitBreakerState: document.getElementById("circuitBreakerState"),
+  processWeekRange: document.getElementById("processWeekRange"),
+  processAdherence: document.getElementById("processAdherence"),
+  processScored: document.getElementById("processScored"),
+  weekPnl: document.getElementById("weekPnl"),
+  weekPnlHint: document.getElementById("weekPnlHint"),
+  weekBalanceInput: document.getElementById("weekBalanceInput"),
+  saveWeekBalanceBtn: document.getElementById("saveWeekBalanceBtn"),
   backtestBanner: document.getElementById("backtestBanner"),
   exitBacktestBtn: document.getElementById("exitBacktestBtn"),
   tradeForm: document.getElementById("tradeForm"),
@@ -165,6 +178,7 @@ const refs = {
   fLotSize: document.getElementById("fLotSize"),
   fSlPrice: document.getElementById("fSlPrice"),
   fTpPrice: document.getElementById("fTpPrice"),
+  fMoodOpen: document.getElementById("fMoodOpen"),
   fScreenshotZone: document.getElementById("fScreenshotZone"),
   fImageInput: document.getElementById("fImageInput"),
   fScreenshotLabel: document.getElementById("fScreenshotLabel"),
@@ -205,6 +219,9 @@ const refs = {
   fPnlWrap: document.getElementById("fPnlWrap"),
   fPnlInput: document.getElementById("fPnlInput"),
   fPnlPrefix: document.getElementById("fPnlPrefix"),
+  fCloseJournalWrap: document.getElementById("fCloseJournalWrap"),
+  fMoodClose: document.getElementById("fMoodClose"),
+  fProcessToggle: document.getElementById("fProcessToggle"),
   fNote: document.getElementById("fNote"),
   fSaveBtn: document.getElementById("fSaveBtn"),
   fClearBtn: document.getElementById("fClearBtn"),
@@ -250,6 +267,8 @@ const refs = {
   ctPnlWrap: document.getElementById("ctPnlWrap"),
   ctPnlInput: document.getElementById("ctPnlInput"),
   ctPnlPrefix: document.getElementById("ctPnlPrefix"),
+  ctMoodClose: document.getElementById("ctMoodClose"),
+  ctProcessToggle: document.getElementById("ctProcessToggle"),
   ctAfterZone: document.getElementById("ctAfterZone"),
   ctAfterInput: document.getElementById("ctAfterInput"),
   ctAfterPreviewWrap: document.getElementById("ctAfterPreviewWrap"),
@@ -271,6 +290,7 @@ void init();
 async function init() {
   bindNavigation();
   bindHistoryFilters();
+  bindHistoryDashboard();
   bindTradeForm();
   bindDetailAndLightbox();
   bindCloseTradeModal();
@@ -369,6 +389,21 @@ function bindHistoryFilters() {
   });
 }
 
+function bindHistoryDashboard() {
+  refs.saveWeekBalanceBtn.addEventListener("click", () => {
+    const balance = parseNumber(refs.weekBalanceInput.value);
+    if (!Number.isFinite(balance) || balance < 0) {
+      showToast("Enter a valid week-start balance");
+      return;
+    }
+    const key = getLocalWeekKey(new Date());
+    state.settings.weekStartBalances[key] = round2(balance);
+    saveSettings();
+    renderProcessStats();
+    showToast("Week-start balance saved");
+  });
+}
+
 function applyPillState(selector, activeBtn) {
   document.querySelectorAll(selector).forEach((btn) => btn.classList.toggle("active", btn === activeBtn));
 }
@@ -439,6 +474,15 @@ function bindTradeForm() {
     refs.fTwoBulletsPanel.hidden = !on;
     refs.fSingleOutcomePanel.hidden = on;
     updateFormTwoBullets();
+  });
+
+  refs.fProcessToggle.addEventListener("click", (event) => {
+    const btn = event.target.closest("button[data-process]");
+    if (!btn) {
+      return;
+    }
+    state.formProcessClean = btn.dataset.process === "true";
+    renderProcessToggle(refs.fProcessToggle, state.formProcessClean);
   });
 
   [refs.fBulletLotSize, refs.fB1Pnl, refs.fB2Pnl, refs.fB2TargetRr, refs.fB1Outcome, refs.fB2Outcome].forEach((el) => {
@@ -768,6 +812,24 @@ function updateFormTwoBullets() {
   }
 
   refs.fB2StopMovedWrap.hidden = !(refs.fB1Outcome.value === "win" && !refs.fB2Outcome.value);
+  updateFormCloseRequirements();
+}
+
+function formHasClosedOutcome() {
+  if (refs.fTwoBulletsToggle.checked) {
+    return Boolean(refs.fB1Outcome.value && refs.fB2Outcome.value);
+  }
+  return Boolean(state.formOutcome);
+}
+
+function updateFormCloseRequirements() {
+  refs.fCloseJournalWrap.hidden = !formHasClosedOutcome();
+}
+
+function renderProcessToggle(container, value) {
+  container.querySelectorAll("button[data-process]").forEach((btn) => {
+    btn.classList.toggle("active", value !== null && (btn.dataset.process === "true") === value);
+  });
 }
 
 function handleFormOutcomeChange(outcome) {
@@ -775,10 +837,12 @@ function handleFormOutcomeChange(outcome) {
     refs.fPnlWrap.hidden = true;
     refs.fPnlInput.value = "";
     refs.fPnlInput.disabled = false;
+    updateFormCloseRequirements();
     return;
   }
 
   refs.fPnlWrap.hidden = false;
+  updateFormCloseRequirements();
   const abs = Math.abs(parseNumber(refs.fPnlInput.value) || 0);
   if (outcome === "win") {
     refs.fPnlInput.value = String(abs || "");
@@ -861,6 +925,8 @@ async function saveTradeForm() {
   const direction = state.formDirection;
   const entryPrice = parseNumber(refs.fEntryPrice.value);
   const lotSize = parseNumber(refs.fLotSize.value);
+  const existing = state.editingTradeId ? state.trades.find((trade) => trade.id === state.editingTradeId) : null;
+  const moodOpen = refs.fMoodOpen.value.trim();
 
   if (!pair) {
     showToast("Select a pair");
@@ -872,6 +938,16 @@ async function saveTradeForm() {
   }
   if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
     showToast("Entry price must be greater than 0");
+    return;
+  }
+  if (!existing && !moodOpen) {
+    showToast("Add your opening journal entry");
+    refs.fMoodOpen.focus();
+    return;
+  }
+  if (existing?.mood_open && !moodOpen) {
+    showToast("Opening journal cannot be empty");
+    refs.fMoodOpen.focus();
     return;
   }
 
@@ -897,30 +973,43 @@ async function saveTradeForm() {
     }
   }
 
+  if (formHasClosedOutcome()) {
+    if (!refs.fMoodClose.value.trim()) {
+      showToast("Add your closing journal entry");
+      refs.fMoodClose.focus();
+      return;
+    }
+    if (state.formProcessClean === null) {
+      showToast("Choose whether you followed all rules");
+      refs.fProcessToggle.querySelector("button")?.focus();
+      return;
+    }
+  }
+
   setSavePending(true);
   const saveStartedAt = performance.now();
   const now = new Date();
-  const existing = state.editingTradeId ? state.trades.find((trade) => trade.id === state.editingTradeId) : null;
 
   dbg("save: writing images", { hasBefore: Boolean(state.formImageBlob), hasAfter: Boolean(state.formAfterImageBlob) });
-  const beforeImageId = state.formImageBlob
-    ? await dbApi.saveImage(state.formImageBlob)
-    : state.formBeforeImageRemoved
-      ? null
-      : existing?.before_image_id || null;
-  dbg("save: before image written", { elapsedMs: Math.round(performance.now() - saveStartedAt) });
-  const afterImageId = state.formAfterImageBlob
-    ? await dbApi.saveImage(state.formAfterImageBlob)
-    : state.formAfterImageRemoved
-      ? null
-      : existing?.after_image_id || null;
+  const [beforeImageId, afterImageId] = await Promise.all([
+    state.formImageBlob
+      ? dbApi.saveImage(state.formImageBlob)
+      : state.formBeforeImageRemoved
+        ? null
+        : existing?.before_image_id || null,
+    state.formAfterImageBlob
+      ? dbApi.saveImage(state.formAfterImageBlob)
+      : state.formAfterImageRemoved
+        ? null
+        : existing?.after_image_id || null,
+  ]);
   if (existing?.before_image_id && existing.before_image_id !== beforeImageId) {
     void discardReplacedImage(existing.before_image_id);
   }
   if (existing?.after_image_id && existing.after_image_id !== afterImageId) {
     void discardReplacedImage(existing.after_image_id);
   }
-  dbg("save: after image written", { elapsedMs: Math.round(performance.now() - saveStartedAt) });
+  dbg("save: images written", { elapsedMs: Math.round(performance.now() - saveStartedAt) });
 
   const sessions = Array.from(refs.fSessionPills.querySelectorAll("button.active"))
     .map((btn) => btn.dataset.session || "")
@@ -950,7 +1039,7 @@ async function saveTradeForm() {
     b2Pnl = getSignedPnlFromOutcome(b2Outcome, parseNumber(refs.fB2Pnl.value));
     b2TargetRr = parseNumber(refs.fB2TargetRr.value);
     b2StopMoved = refs.fB2StopMoved.checked;
-    outcome = !b1Outcome && !b2Outcome ? "" : b2Outcome || b1Outcome;
+    outcome = b1Outcome && b2Outcome ? b2Outcome || b1Outcome : "";
     const b1n = Number.isFinite(b1Pnl) ? b1Pnl : 0;
     const b2n = Number.isFinite(b2Pnl) ? b2Pnl : 0;
     pnl = round2(b1n + b2n);
@@ -988,6 +1077,9 @@ async function saveTradeForm() {
     b2_pnl: b2Pnl,
     b2_target_rr: b2TargetRr,
     b2_stop_moved: b2StopMoved,
+    process_clean: outcome ? state.formProcessClean : null,
+    mood_open: moodOpen || existing?.mood_open || "",
+    mood_close: outcome ? refs.fMoodClose.value.trim() : "",
     note: refs.fNote.value.trim(),
     is_backtest: Boolean(state.settings.backtestMode),
     backtest_date: state.settings.backtestMode ? now.toISOString().slice(0, 10) : null,
@@ -1043,6 +1135,7 @@ function resetTradeForm() {
   state.formDirection = "";
   state.formOutcome = "";
   state.formStrategy = "";
+  state.formProcessClean = null;
   state.editingTradeId = null;
   state.formAiResult = null;
   state.activeImageTarget = "before";
@@ -1061,6 +1154,8 @@ function resetTradeForm() {
   refs.fTwoBulletsPanel.hidden = true;
   refs.fSingleOutcomePanel.hidden = false;
   refs.fPnlWrap.hidden = true;
+  refs.fCloseJournalWrap.hidden = true;
+  renderProcessToggle(refs.fProcessToggle, null);
   refs.fSaveBtn.textContent = "Save Trade";
   refs.fCancelBtn.hidden = true;
 
@@ -1144,6 +1239,15 @@ function bindCloseTradeModal() {
   });
   refs.closeTradeCancelBtn.addEventListener("click", closeCloseTradeModal);
 
+  refs.ctProcessToggle.addEventListener("click", (event) => {
+    const btn = event.target.closest("button[data-process]");
+    if (!btn) {
+      return;
+    }
+    state.closeProcessClean = btn.dataset.process === "true";
+    renderProcessToggle(refs.ctProcessToggle, state.closeProcessClean);
+  });
+
   refs.ctOutcomeGrid.addEventListener("click", (event) => {
     const btn = event.target.closest("button[data-outcome]");
     if (!btn) {
@@ -1191,7 +1295,13 @@ function bindCloseTradeModal() {
   refs.ctClearAfter.addEventListener("click", clearCloseAfterImage);
 
   refs.ctSaveBtn.addEventListener("click", () => {
-    void saveCloseTrade();
+    void saveCloseTrade().catch((error) => {
+      state.closeSaving = false;
+      refs.ctSaveBtn.disabled = false;
+      refs.ctSaveBtn.textContent = "Save & Close Trade";
+      console.error(error);
+      showToast("Close failed - try again");
+    });
   });
 }
 
@@ -1219,11 +1329,17 @@ function clearCloseAfterImage() {
 function openCloseTradeModal(trade) {
   state.closeTradeId = trade.id;
   state.closeOutcome = "";
+  state.closeProcessClean = null;
+  state.closeSaving = false;
   clearCloseAfterImage();
   refs.ctOutcomeGrid.querySelectorAll("button").forEach((node) => node.classList.remove("active"));
   refs.ctPnlWrap.hidden = true;
   refs.ctPnlInput.value = "";
   refs.ctPnlInput.disabled = false;
+  refs.ctMoodClose.value = "";
+  refs.ctSaveBtn.disabled = false;
+  refs.ctSaveBtn.textContent = "Save & Close Trade";
+  renderProcessToggle(refs.ctProcessToggle, null);
   refs.closeTradeTitle.textContent = `Close Trade · ${trade.trade_id} - ${trade.pair}`;
   refs.closeTradeModal.hidden = false;
 }
@@ -1232,9 +1348,13 @@ function closeCloseTradeModal() {
   refs.closeTradeModal.hidden = true;
   clearCloseAfterImage();
   state.closeTradeId = null;
+  state.closeSaving = false;
 }
 
 async function saveCloseTrade() {
+  if (state.closeSaving) {
+    return;
+  }
   const trade = state.trades.find((row) => row.id === state.closeTradeId);
   if (!trade) {
     closeCloseTradeModal();
@@ -1244,6 +1364,21 @@ async function saveCloseTrade() {
     showToast("Pick an outcome");
     return;
   }
+  const moodClose = refs.ctMoodClose.value.trim();
+  if (!moodClose) {
+    showToast("Add your closing journal entry");
+    refs.ctMoodClose.focus();
+    return;
+  }
+  if (state.closeProcessClean === null) {
+    showToast("Choose whether you followed all rules");
+    refs.ctProcessToggle.querySelector("button")?.focus();
+    return;
+  }
+
+  state.closeSaving = true;
+  refs.ctSaveBtn.disabled = true;
+  refs.ctSaveBtn.textContent = "Saving...";
 
   const pnl = getPnlWithSign(state.closeOutcome, parseNumber(refs.ctPnlInput.value));
   const afterImageId = state.closeAfterImageBlob ? await dbApi.saveImage(state.closeAfterImageBlob) : trade.after_image_id;
@@ -1256,6 +1391,8 @@ async function saveCloseTrade() {
     ...trade,
     outcome: state.closeOutcome,
     pnl: Number.isFinite(pnl) ? pnl : null,
+    process_clean: state.closeProcessClean,
+    mood_close: moodClose,
     after_image_id: afterImageId,
     status: "closed",
     closed_at_utc: now.toISOString(),
@@ -1287,6 +1424,7 @@ async function openTradeForEdit(trade) {
   state.formStrategy = trade.strategy || "";
   state.formDirection = trade.direction || "";
   state.formOutcome = trade.outcome || "";
+  state.formProcessClean = trade.process_clean;
 
   refs.fPair.value = trade.pair || "";
   refs.fPairNote.textContent = state.settings.pairNotes[trade.pair] || "";
@@ -1294,7 +1432,10 @@ async function openTradeForEdit(trade) {
   refs.fEntryPrice.value = trade.entry_price ? String(trade.entry_price) : "";
   refs.fSlPrice.value = trade.sl_price ? String(trade.sl_price) : "";
   refs.fTpPrice.value = trade.tp_price ? String(trade.tp_price) : "";
+  refs.fMoodOpen.value = trade.mood_open || "";
+  refs.fMoodClose.value = trade.mood_close || "";
   refs.fNote.value = trade.note || "";
+  renderProcessToggle(refs.fProcessToggle, state.formProcessClean);
 
   refs.fDirectionToggle.querySelectorAll("button[data-value]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.value === state.formDirection);
@@ -1349,8 +1490,10 @@ async function openTradeForEdit(trade) {
     updateFormTwoBullets();
   }
 
-  const beforeBlob = trade.before_image_id ? await getImageBlob(trade.before_image_id) : null;
-  const afterBlob = trade.after_image_id ? await getImageBlob(trade.after_image_id) : null;
+  const [beforeBlob, afterBlob] = await Promise.all([
+    trade.before_image_id ? getImageBlob(trade.before_image_id) : null,
+    trade.after_image_id ? getImageBlob(trade.after_image_id) : null,
+  ]);
 
   clearFormBeforeImage();
   // clearFormBeforeImage marks both images as "removed" as a side effect of
@@ -1416,7 +1559,7 @@ async function deleteTradeFromDetail() {
 
     state.trades = state.trades.filter((row) => row.id !== id);
     closeTradeDetailModal();
-    renderHistory();
+    renderAll();
     showToast(stillPending ? "Deleted locally - cloud delete pending, will retry" : "Trade deleted");
   } catch (error) {
     console.error(error);
@@ -1507,6 +1650,8 @@ function bindSessionStatusIndicator() {
     const status = getSessionStatus();
     refs.sessionStatusPill.dataset.status = status.tone;
     refs.sessionStatusPill.innerHTML = `<span class="session-dot">●</span><span>${escapeHtml(status.label)}</span>`;
+    renderDailyCircuitBreaker();
+    renderProcessStats();
   };
   render();
   window.setInterval(render, 60000);
@@ -1538,10 +1683,61 @@ function renderAll() {
   renderPairSelects();
   renderFormSessionPills();
   renderHistory();
+  renderProcessStats();
+  renderDailyCircuitBreaker();
   renderSettings();
   renderTradeCountHint();
   refs.fLotSize.placeholder = `e.g. ${state.settings.defaultLotSize || 0.01}`;
   refs.backtestBanner.hidden = !state.settings.backtestMode;
+}
+
+function renderProcessStats(now = new Date()) {
+  const weekStart = getLocalWeekStart(now);
+  const weekKey = getLocalWeekKey(now);
+  const closed = state.trades.filter((trade) => {
+    const closedAt = getTradeCloseDate(trade);
+    return !trade.is_backtest && trade.status === "closed" && closedAt && closedAt >= weekStart && closedAt <= now;
+  });
+  const scored = closed.filter((trade) => typeof trade.process_clean === "boolean");
+  const clean = scored.filter((trade) => trade.process_clean).length;
+  const unscored = closed.length - scored.length;
+  const weekPnl = closed.reduce((sum, trade) => sum + (Number.isFinite(trade.pnl) ? trade.pnl : 0), 0);
+  const balance = parseNumber(state.settings.weekStartBalances[weekKey]);
+
+  refs.processWeekRange.textContent = `${formatShortDate(weekStart)} - ${formatShortDate(now)}`;
+  refs.processAdherence.textContent = scored.length ? `${Math.round((clean / scored.length) * 100)}%` : "-";
+  refs.processScored.textContent = `${scored.length} scored / ${closed.length} closed${unscored ? ` · ${unscored} unscored` : ""}`;
+  if (document.activeElement !== refs.weekBalanceInput) {
+    refs.weekBalanceInput.value = Number.isFinite(balance) ? String(balance) : "";
+  }
+  refs.weekPnl.textContent = Number.isFinite(balance) ? formatCurrency(round2(weekPnl)) : "-";
+  refs.weekPnl.className = Number.isFinite(balance) ? (weekPnl > 0 ? "win" : weekPnl < 0 ? "loss" : "") : "";
+  refs.weekPnlHint.textContent = Number.isFinite(balance)
+    ? `From ${formatBalance(balance)} week-start balance`
+    : "Set week-start balance";
+}
+
+function renderDailyCircuitBreaker(now = new Date()) {
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const closedToday = state.trades.filter((trade) => {
+    const closedAt = getTradeCloseDate(trade);
+    return !trade.is_backtest && trade.status === "closed" && closedAt && closedAt >= dayStart && closedAt <= now;
+  });
+  const wins = closedToday.filter((trade) => trade.outcome === "win").length;
+  const losses = closedToday.filter((trade) => trade.outcome === "loss").length;
+  const dayComplete = wins >= 2 || losses >= 2;
+
+  refs.todayTally.textContent = `Today: ${wins} win${wins === 1 ? "" : "s"} / ${losses} loss${losses === 1 ? "" : "es"}`;
+  refs.circuitBreakerState.hidden = !dayComplete;
+  document.querySelectorAll('[data-screen="log"]').forEach((button) => {
+    button.classList.toggle("circuit-complete", dayComplete);
+    if (button.classList.contains("nav-fab")) {
+      button.setAttribute("aria-label", dayComplete ? "Circuit breaker - day complete" : "Log Trade");
+      button.title = dayComplete ? "Circuit breaker - day complete" : "Log Trade";
+    } else {
+      button.textContent = dayComplete ? "Circuit breaker - day complete" : "Log Trade";
+    }
+  });
 }
 
 function renderTradeCountHint() {
@@ -1601,6 +1797,29 @@ function renderHistory() {
     })
     .join("");
 
+  const cardsById = new Map(
+    Array.from(refs.historyList.querySelectorAll(".history-card")).map((card) => [card.dataset.tradeId || "", card])
+  );
+  rows.forEach((trade) => {
+    if (trade.status !== "closed") {
+      return;
+    }
+    const card = cardsById.get(trade.id);
+    const badgeRow = card?.querySelector(".badge-row");
+    if (!badgeRow) {
+      return;
+    }
+    const badge = document.createElement("span");
+    badge.className =
+      trade.process_clean === true
+        ? "badge process-clean"
+        : trade.process_clean === false
+          ? "badge process-broken"
+          : "badge process-unscored";
+    badge.textContent = trade.process_clean === true ? "Rules ✓" : trade.process_clean === false ? "Rules ✗" : "Unscored";
+    badgeRow.append(badge);
+  });
+
   refs.historyList.querySelectorAll(".history-card").forEach((card) => {
     card.addEventListener("click", (event) => {
       if (event.target.closest("[data-quick-close]")) {
@@ -1632,8 +1851,10 @@ async function openTradeDetail(id) {
   refs.closeTradeFromDetailBtn.hidden = !(trade.status === "open" && !trade.two_bullets);
   revokeLightboxImages();
 
-  const beforeBlob = trade.before_image_id ? await getImageBlob(trade.before_image_id) : null;
-  const afterBlob = trade.after_image_id ? await getImageBlob(trade.after_image_id) : null;
+  const [beforeBlob, afterBlob] = await Promise.all([
+    trade.before_image_id ? getImageBlob(trade.before_image_id) : null,
+    trade.after_image_id ? getImageBlob(trade.after_image_id) : null,
+  ]);
 
   const beforeUrl = beforeBlob ? URL.createObjectURL(beforeBlob) : "";
   const afterUrl = afterBlob ? URL.createObjectURL(afterBlob) : "";
@@ -1646,6 +1867,24 @@ async function openTradeDetail(id) {
   const absentLabels = strategyItems.filter((item) => !trade.confluences?.[item.key]).map((item) => item.label);
 
   refs.detailBody.innerHTML = `<div class=\"detail-grid\">\n    <div><div class=\"detail-label\">Pair</div><div class=\"detail-value\">${escapeHtml(trade.pair)}</div></div>\n    <div><div class=\"detail-label\">Direction</div><div class=\"detail-value\">${escapeHtml(trade.direction)}</div></div>\n    <div><div class=\"detail-label\">Entry price</div><div class=\"detail-value\">${formatPrice(trade.entry_price)}</div></div>\n    <div><div class=\"detail-label\">Status</div><div class=\"detail-value\">${escapeHtml(trade.status)}</div></div>\n  </div>\n  <div><div class=\"detail-label\">Two Bullets</div><div class=\"detail-value\">${trade.two_bullets ? `B1: ${trade.b1_outcome || "Open"} ${trade.b1_pnl != null ? formatCurrency(trade.b1_pnl) : ""} | B2: ${trade.b2_outcome || "Open"} ${trade.b2_pnl != null ? formatCurrency(trade.b2_pnl) : ""} ${trade.b2_target_rr ? `(target 1:${trade.b2_target_rr})` : ""}` : "Off"}</div></div>\n  <div><div class=\"detail-label\">Confluences</div><div class=\"detail-confluence\">\n    <div class=\"detail-confluence-head\">\n      <span class=\"detail-confluence-pill present\">Present ${presentLabels.length}</span>\n      <span class=\"detail-confluence-pill absent\">Absent ${absentLabels.length}</span>\n    </div>\n    <div class=\"detail-confluence-line\"><strong>P:</strong> ${escapeHtml(summarizeLabels(presentLabels))}</div>\n    <div class=\"detail-confluence-line\"><strong>A:</strong> ${escapeHtml(summarizeLabels(absentLabels))}</div>\n  </div></div>\n  <div><div class=\"detail-label\">Note</div><div class=\"detail-value\">${escapeHtml(trade.note || "-")}</div></div>\n  <div class=\"detail-grid\">\n    ${beforeUrl ? `<div><div class=\"detail-label\">Before</div><img class=\"trade-image-thumb\" data-lightbox-index=\"0\" src=\"${beforeUrl}\" alt=\"Before\" /></div>` : ""}\n    ${afterUrl ? `<div><div class=\"detail-label\">After</div><img class=\"trade-image-thumb\" data-lightbox-index=\"1\" src=\"${afterUrl}\" alt=\"After\" /></div>` : ""}\n  </div>`;
+
+  const imageGrid = refs.detailBody.lastElementChild;
+  imageGrid?.insertAdjacentHTML(
+    "beforebegin",
+    `<div><div class="detail-label">Process</div><div class="detail-value">${
+      trade.process_clean === true ? "Followed all rules" : trade.process_clean === false ? "Rules not followed" : "Unscored"
+    }</div></div>
+    ${
+      trade.mood_open
+        ? `<div><div class="detail-label">Opening journal</div><div class="detail-value detail-journal">${escapeHtml(trade.mood_open)}</div></div>`
+        : ""
+    }
+    ${
+      trade.mood_close
+        ? `<div><div class="detail-label">Closing journal</div><div class="detail-value detail-journal">${escapeHtml(trade.mood_close)}</div></div>`
+        : ""
+    }`
+  );
 
   refs.detailBody.querySelectorAll("[data-lightbox-index]").forEach((img) => {
     img.addEventListener("click", () => {
@@ -1712,9 +1951,13 @@ function loadSettings() {
       pairs: Array.isArray(parsed.pairs) && parsed.pairs.length ? parsed.pairs : [...DEFAULT_SETTINGS.pairs],
       sessions: Array.isArray(parsed.sessions) && parsed.sessions.length ? parsed.sessions : [...DEFAULT_SETTINGS.sessions],
       pairNotes: parsed.pairNotes && typeof parsed.pairNotes === "object" ? parsed.pairNotes : { ...DEFAULT_PAIR_NOTES },
+      weekStartBalances:
+        parsed.weekStartBalances && typeof parsed.weekStartBalances === "object" && !Array.isArray(parsed.weekStartBalances)
+          ? parsed.weekStartBalances
+          : {},
     };
   } catch (_error) {
-    return { ...DEFAULT_SETTINGS, pairNotes: { ...DEFAULT_PAIR_NOTES } };
+    return { ...DEFAULT_SETTINGS, pairNotes: { ...DEFAULT_PAIR_NOTES }, weekStartBalances: {} };
   }
 }
 
@@ -1748,6 +1991,9 @@ function normalizeTrade(raw) {
     sessions: Array.isArray(raw?.sessions) ? raw.sessions.map((item) => String(item || "").trim()).filter(Boolean) : [],
     before_image_id: raw?.before_image_id || null,
     after_image_id: raw?.after_image_id || null,
+    process_clean: raw?.process_clean === true ? true : raw?.process_clean === false ? false : null,
+    mood_open: String(raw?.mood_open || ""),
+    mood_close: String(raw?.mood_close || ""),
     note: String(raw?.note || ""),
     is_backtest: Boolean(raw?.is_backtest),
     backtest_date: raw?.backtest_date || null,
@@ -1903,6 +2149,38 @@ function formatCurrency(value) {
   }
   const sign = value > 0 ? "+" : value < 0 ? "-" : "";
   return `${sign}$${Math.abs(value).toFixed(2)}`;
+}
+
+function formatBalance(value) {
+  return `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function getLocalWeekStart(input) {
+  const date = input instanceof Date ? new Date(input) : new Date(input);
+  const mondayOffset = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - mondayOffset);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function getLocalWeekKey(input) {
+  const start = getLocalWeekStart(input);
+  const year = start.getFullYear();
+  const month = String(start.getMonth() + 1).padStart(2, "0");
+  const day = String(start.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getTradeCloseDate(trade) {
+  if (!trade?.closed_at_utc) {
+    return null;
+  }
+  const date = new Date(trade.closed_at_utc);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatShortDate(input) {
+  return new Date(input).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function formatPrice(value) {

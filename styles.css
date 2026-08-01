@@ -184,6 +184,106 @@ p {
   animation: session-blink 1.4s step-end infinite;
 }
 
+.history-status-stack {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
+.today-tally {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.circuit-breaker-state {
+  max-width: 230px;
+  border-left: 2px solid var(--color-loss);
+  padding-left: 8px;
+  color: #ff7b7b;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.process-stats-card {
+  max-width: 900px;
+  margin: 0 auto 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: 14px;
+}
+
+.process-stats-head h2 {
+  margin: 0 0 3px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.process-stats-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(190px, 1.2fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.process-stat,
+.week-balance-field {
+  min-width: 0;
+  border-left: 1px solid var(--border-mid);
+  padding-left: 12px;
+}
+
+.process-stat {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+}
+
+.process-stat-label,
+.week-balance-field > span {
+  color: var(--text-label);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.process-stat strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 22px;
+}
+
+.process-stat strong.win {
+  color: var(--color-win);
+}
+
+.process-stat strong.loss {
+  color: var(--color-loss);
+}
+
+.week-balance-field {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+}
+
+.week-balance-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.week-balance-control input,
+.week-balance-control button {
+  min-height: 38px;
+}
+
 @keyframes session-blink {
   50% {
     opacity: 0.3;
@@ -470,6 +570,37 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
+}
+
+.close-journal-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.required-journal-field textarea {
+  min-height: 88px;
+  resize: vertical;
+  text-transform: none;
+}
+
+.process-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.process-toggle button {
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.process-toggle button.active {
+  border-color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text-primary);
 }
 
 .seg-btn {
@@ -871,6 +1002,22 @@ button:disabled {
   border-color: var(--accent-dim);
 }
 
+.badge.process-clean {
+  border-color: rgba(255, 255, 255, 0.65);
+  color: var(--text-primary);
+}
+
+.badge.process-broken {
+  border-color: var(--text-tertiary);
+  color: var(--text-secondary);
+  border-style: dashed;
+}
+
+.badge.process-unscored {
+  border-color: var(--border-mid);
+  color: var(--text-tertiary);
+}
+
 .history-bottom {
   display: flex;
   align-items: center;
@@ -1098,6 +1245,19 @@ button:disabled {
   color: var(--text-primary);
 }
 
+.detail-journal {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+[data-screen="log"].circuit-complete {
+  border-color: rgba(239, 68, 68, 0.75) !important;
+  background: var(--color-loss-bg) !important;
+  color: #ff7b7b !important;
+  box-shadow: 0 0 18px rgba(239, 68, 68, 0.18) !important;
+}
+
 .detail-confluence {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -1306,4 +1466,46 @@ button:disabled {
     grid-template-columns: 1fr 220px;
     align-items: end;
   }
+}
+
+@media (max-width: 620px) {
+  .screen-header {
+    align-items: flex-start;
+  }
+
+  .history-status-stack {
+    justify-items: end;
+  }
+
+  .process-stats-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .week-balance-field {
+    grid-column: 1 / -1;
+  }
+
+  .empty-state {
+    padding: 32px 16px 100px;
+  }
+
+  .empty-state .empty-icon {
+    font-size: 32px;
+    margin-bottom: 10px;
+  }
+}
+
+@media (max-width: 420px) {
+  .screen-header {
+    display: grid;
+  }
+
+  .history-status-stack {
+    justify-items: start;
+  }
+
+  .circuit-breaker-state {
+    text-align: left;
+  }
+
 }
