@@ -43,7 +43,10 @@
               <p id="tradeCountHint" class="hint">0 trades recorded</p>
             </div>
             <div class="history-status-stack">
-              <div id="sessionStatusPill" class="session-pill">● Off-Session</div>
+              <div class="history-header-actions">
+                <div id="sessionStatusPill" class="session-pill">● Off-Session</div>
+                <button id="openExportBtn" class="btn btn-small history-export-btn" type="button" title="Export trade history">↓ Export</button>
+              </div>
               <div id="todayTally" class="today-tally">Today: 0 wins / 0 losses</div>
               <div id="circuitBreakerState" class="circuit-breaker-state" hidden>Circuit breaker - day complete</div>
             </div>
@@ -387,17 +390,6 @@
             </article>
 
             <article class="panel">
-              <h2>Export</h2>
-              <div class="button-stack">
-                <button id="exportLiveJsonBtn" class="btn" type="button">Export Live Trades - JSON</button>
-                <button id="exportBacktestJsonBtn" class="btn" type="button">Export Backtest Trades - JSON</button>
-                <button id="exportAllJsonBtn" class="btn" type="button">Export All Trades - JSON</button>
-                <button id="exportLiveCsvBtn" class="btn" type="button">Export Live Trades - CSV</button>
-                <button id="exportBacktestCsvBtn" class="btn" type="button">Export Backtest Trades - CSV</button>
-              </div>
-            </article>
-
-            <article class="panel">
               <h2>Sync</h2>
               <button id="forceSyncBtn" class="btn" type="button">Force Sync</button>
               <p class="hint">Hard refresh from Supabase into local IndexedDB.</p>
@@ -482,6 +474,71 @@
         </div>
         <div class="modal-actions">
           <button id="ctSaveBtn" class="btn primary" type="button" style="width:100%">Save &amp; Close Trade</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="exportModal" class="modal" hidden>
+      <div class="modal-card export-modal-card">
+        <div class="modal-head">
+          <h2>Export History</h2>
+          <button id="closeExportBtn" class="btn" type="button">Close</button>
+        </div>
+        <div class="export-builder">
+          <div class="field">
+            <div>Scope</div>
+            <div id="exportScopeToggle" class="segmented export-scope-toggle" role="group" aria-label="Export date scope">
+              <button class="seg-btn active" data-export-scope="day" type="button">Single day</button>
+              <button class="seg-btn" data-export-scope="range" type="button">Date range</button>
+              <button class="seg-btn" data-export-scope="all" type="button">All history</button>
+            </div>
+          </div>
+
+          <label id="exportDayWrap" class="field">
+            Trade date
+            <input id="exportDayInput" type="date" />
+          </label>
+
+          <div id="exportRangeWrap" class="export-date-range" hidden>
+            <label class="field">From<input id="exportFromInput" type="date" /></label>
+            <label class="field">To<input id="exportToInput" type="date" /></label>
+          </div>
+
+          <div class="field">
+            <div>Trade type</div>
+            <div id="exportModeToggle" class="segmented" role="group" aria-label="Export trade type">
+              <button class="seg-btn active" data-export-mode="all" type="button">All</button>
+              <button class="seg-btn" data-export-mode="live" type="button">Live</button>
+              <button class="seg-btn" data-export-mode="backtest" type="button">Backtest</button>
+            </div>
+          </div>
+
+          <label class="field">
+            Format
+            <select id="exportFormatSelect">
+              <option value="zip">Complete package (.zip)</option>
+              <option value="csv">Spreadsheet (.csv)</option>
+              <option value="json">Data backup (.json)</option>
+            </select>
+          </label>
+
+          <div class="export-summary" aria-live="polite">
+            <strong id="exportMatchCount">0 trades</strong>
+            <span id="exportImageCount" class="hint">0 screenshots</span>
+          </div>
+
+          <div id="exportProgressWrap" class="export-progress" hidden>
+            <div class="export-progress-head">
+              <span id="exportProgressText">Preparing export...</span>
+              <span id="exportProgressValue">0%</span>
+            </div>
+            <progress id="exportProgressBar" max="100" value="0"></progress>
+          </div>
+
+          <div class="export-actions">
+            <button id="cancelExportBtn" class="btn" type="button" hidden>Cancel</button>
+            <button id="downloadExportBtn" class="btn primary" type="button">Download package</button>
+          </div>
         </div>
       </div>
     </div>

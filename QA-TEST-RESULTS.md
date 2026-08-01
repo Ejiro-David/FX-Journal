@@ -34,6 +34,17 @@ This document tracks the current Edge Forge v2 app.
 - Two live wins or two live losses in one local day activate the red day-complete state.
 - The red Log Trade control remains tappable; breakeven and backtest trades do not advance the breaker.
 
+## Export Flow To Validate
+
+- Single-day and inclusive date-range exports contain only matching trade dates.
+- Backtest date filtering uses the recorded backtest date.
+- Export type explicitly filters All, Live, or Backtest records and never silently inherits History filters.
+- Complete ZIP packages contain trade JSON, trade CSV, an image manifest, and available screenshots grouped by date and trade ID.
+- All-history ZIP includes every trade and available before/after screenshot.
+- Missing cloud images are listed in the manifest and do not cancel the archive.
+- Export controls remain locked while an archive is assembled, and Cancel stops the active job.
+- Large screenshot packages show a confirmation warning on desktop and mobile.
+
 ## Smoke Coverage
 
 `smoke.spec.js` now targets the current Edge Forge DOM:

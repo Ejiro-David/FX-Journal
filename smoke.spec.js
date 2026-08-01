@@ -170,3 +170,56 @@ test("Before and after screenshots can both be selected", async ({ page }) => {
   await expect(page.locator("#fBeforePreviewWrap")).toBeVisible();
   await expect(page.locator("#fAfterPreviewWrap")).toBeVisible();
 });
+
+test("Selected-date export downloads records and an image ZIP", async ({ page }, testInfo) => {
+  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: "domcontentloaded" });
+  await page.click('[data-screen="log"]');
+  await page.selectOption("#fPair", "EURUSD");
+  await page.click('#fDirectionToggle button[data-value="buy"]');
+  await page.fill("#fEntryPrice", "1.12345");
+  await page.fill("#fMoodOpen", "Export test reflection");
+  await page.setInputFiles("#fImageInput", TEST_IMAGE);
+  await page.click("#fSaveBtn");
+  await expect(page.locator(".history-card")).toHaveCount(1);
+
+  await page.click("#openExportBtn");
+  await expect(page.locator("#exportModal")).toBeVisible();
+  const selectedDate = await page.inputValue("#exportDayInput");
+  await expect(page.locator("#exportMatchCount")).toHaveText("1 trade");
+  await expect(page.locator("#exportImageCount")).toHaveText("1 screenshot");
+
+  await page.click('#exportModeToggle [data-export-mode="backtest"]');
+  await expect(page.locator("#exportMatchCount")).toHaveText("0 trades");
+  await expect(page.locator("#downloadExportBtn")).toBeDisabled();
+  await page.click('#exportModeToggle [data-export-mode="live"]');
+  await expect(page.locator("#exportMatchCount")).toHaveText("1 trade");
+
+  await page.click('#exportScopeToggle [data-export-scope="range"]');
+  await page.fill("#exportFromInput", selectedDate);
+  await page.fill("#exportToInput", selectedDate);
+  await expect(page.locator("#exportMatchCount")).toHaveText("1 trade");
+
+  await page.selectOption("#exportFormatSelect", "json");
+  const jsonDownloadPromise = page.waitForEvent("download");
+  await page.click("#downloadExportBtn");
+  const jsonDownload = await jsonDownloadPromise;
+  expect(jsonDownload.suggestedFilename()).toBe(`edge-forge-${selectedDate}-to-${selectedDate}-live.json`);
+  const jsonPath = testInfo.outputPath("selected-date.json");
+  await jsonDownload.saveAs(jsonPath);
+  const exportedTrades = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+  expect(exportedTrades).toHaveLength(1);
+  expect(exportedTrades[0].pair).toBe("EURUSD");
+
+  await page.selectOption("#exportFormatSelect", "zip");
+  const zipDownloadPromise = page.waitForEvent("download");
+  await page.click("#downloadExportBtn");
+  const zipDownload = await zipDownloadPromise;
+  expect(zipDownload.suggestedFilename()).toBe(`edge-forge-${selectedDate}-to-${selectedDate}-live.zip`);
+  const zipPath = testInfo.outputPath("selected-date.zip");
+  await zipDownload.saveAs(zipPath);
+  const zipBytes = fs.readFileSync(zipPath);
+  expect(zipBytes.includes(Buffer.from("trades.json"))).toBeTruthy();
+  expect(zipBytes.includes(Buffer.from("trades.csv"))).toBeTruthy();
+  expect(zipBytes.includes(Buffer.from("image-manifest.json"))).toBeTruthy();
+  expect(zipBytes.includes(Buffer.from(`images/${selectedDate}/EU-001/before.png`))).toBeTruthy();
+});

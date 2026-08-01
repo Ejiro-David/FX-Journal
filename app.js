@@ -144,6 +144,9 @@ const state = {
   closeAfterImageUrl: "",
   formBeforeImageRemoved: false,
   formAfterImageRemoved: false,
+  exportScope: "day",
+  exportMode: "all",
+  activeExportJob: null,
 };
 
 const supabaseClient = createSupabaseClient();
@@ -158,6 +161,7 @@ const refs = {
   historyList: document.getElementById("historyList"),
   filterPair: document.getElementById("filterPair"),
   sessionStatusPill: document.getElementById("sessionStatusPill"),
+  openExportBtn: document.getElementById("openExportBtn"),
   todayTally: document.getElementById("todayTally"),
   circuitBreakerState: document.getElementById("circuitBreakerState"),
   processWeekRange: document.getElementById("processWeekRange"),
@@ -245,11 +249,6 @@ const refs = {
   defaultSessionSelect: document.getElementById("defaultSessionSelect"),
   backtestModeToggle: document.getElementById("backtestModeToggle"),
   saveDefaultsBtn: document.getElementById("saveDefaultsBtn"),
-  exportLiveJsonBtn: document.getElementById("exportLiveJsonBtn"),
-  exportBacktestJsonBtn: document.getElementById("exportBacktestJsonBtn"),
-  exportAllJsonBtn: document.getElementById("exportAllJsonBtn"),
-  exportLiveCsvBtn: document.getElementById("exportLiveCsvBtn"),
-  exportBacktestCsvBtn: document.getElementById("exportBacktestCsvBtn"),
   forceSyncBtn: document.getElementById("forceSyncBtn"),
   downloadBackupBtn: document.getElementById("downloadBackupBtn"),
   tradeDetailModal: document.getElementById("tradeDetailModal"),
@@ -275,6 +274,24 @@ const refs = {
   ctAfterPreview: document.getElementById("ctAfterPreview"),
   ctClearAfter: document.getElementById("ctClearAfter"),
   ctSaveBtn: document.getElementById("ctSaveBtn"),
+  exportModal: document.getElementById("exportModal"),
+  closeExportBtn: document.getElementById("closeExportBtn"),
+  exportScopeToggle: document.getElementById("exportScopeToggle"),
+  exportDayWrap: document.getElementById("exportDayWrap"),
+  exportDayInput: document.getElementById("exportDayInput"),
+  exportRangeWrap: document.getElementById("exportRangeWrap"),
+  exportFromInput: document.getElementById("exportFromInput"),
+  exportToInput: document.getElementById("exportToInput"),
+  exportModeToggle: document.getElementById("exportModeToggle"),
+  exportFormatSelect: document.getElementById("exportFormatSelect"),
+  exportMatchCount: document.getElementById("exportMatchCount"),
+  exportImageCount: document.getElementById("exportImageCount"),
+  exportProgressWrap: document.getElementById("exportProgressWrap"),
+  exportProgressText: document.getElementById("exportProgressText"),
+  exportProgressValue: document.getElementById("exportProgressValue"),
+  exportProgressBar: document.getElementById("exportProgressBar"),
+  cancelExportBtn: document.getElementById("cancelExportBtn"),
+  downloadExportBtn: document.getElementById("downloadExportBtn"),
   lightbox: document.getElementById("lightbox"),
   lightboxImage: document.getElementById("lightboxImage"),
   lightboxClose: document.getElementById("lightboxClose"),
@@ -291,6 +308,7 @@ async function init() {
   bindNavigation();
   bindHistoryFilters();
   bindHistoryDashboard();
+  bindExportBuilder();
   bindTradeForm();
   bindDetailAndLightbox();
   bindCloseTradeModal();
@@ -316,6 +334,8 @@ async function init() {
     }
     if (!refs.lightbox.hidden) {
       refs.lightbox.hidden = true;
+    } else if (!refs.exportModal.hidden && !state.activeExportJob) {
+      closeExportModal();
     } else if (!refs.closeTradeModal.hidden) {
       closeCloseTradeModal();
     } else if (!refs.tradeDetailModal.hidden) {
@@ -402,6 +422,185 @@ function bindHistoryDashboard() {
     renderProcessStats();
     showToast("Week-start balance saved");
   });
+}
+
+function bindExportBuilder() {
+  refs.openExportBtn.addEventListener("click", openExportModal);
+  refs.closeExportBtn.addEventListener("click", closeExportModal);
+  refs.exportModal.addEventListener("click", (event) => {
+    if (event.target === refs.exportModal && !state.activeExportJob) {
+      closeExportModal();
+    }
+  });
+
+  refs.exportScopeToggle.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-export-scope]");
+    if (!button || state.activeExportJob) {
+      return;
+    }
+    state.exportScope = button.dataset.exportScope || "day";
+    renderExportBuilder();
+  });
+
+  refs.exportModeToggle.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-export-mode]");
+    if (!button || state.activeExportJob) {
+      return;
+    }
+    state.exportMode = button.dataset.exportMode || "all";
+    renderExportBuilder();
+  });
+
+  [refs.exportDayInput, refs.exportFromInput, refs.exportToInput, refs.exportFormatSelect].forEach((input) => {
+    input.addEventListener("change", renderExportBuilder);
+    input.addEventListener("input", renderExportBuilder);
+  });
+
+  refs.downloadExportBtn.addEventListener("click", () => {
+    void startHistoryExport();
+  });
+  refs.cancelExportBtn.addEventListener("click", () => {
+    if (state.activeExportJob) {
+      state.activeExportJob.cancelled = true;
+      refs.cancelExportBtn.disabled = true;
+      refs.exportProgressText.textContent = "Canceling...";
+    }
+  });
+}
+
+function openExportModal() {
+  const today = getLocalDateKey(new Date());
+  refs.exportDayInput.value ||= today;
+  refs.exportFromInput.value ||= today;
+  refs.exportToInput.value ||= today;
+  refs.exportModal.hidden = false;
+  renderExportBuilder();
+}
+
+function closeExportModal() {
+  if (state.activeExportJob) {
+    return;
+  }
+  refs.exportModal.hidden = true;
+}
+
+function getHistoryExportSelection() {
+  const modePredicate =
+    state.exportMode === "live"
+      ? (trade) => !trade.is_backtest
+      : state.exportMode === "backtest"
+        ? (trade) => trade.is_backtest
+        : () => true;
+  let datePredicate = () => true;
+  let scopeName = `all-${getLocalDateKey(new Date())}`;
+  let valid = true;
+
+  if (state.exportScope === "day") {
+    const day = refs.exportDayInput.value;
+    valid = /^\d{4}-\d{2}-\d{2}$/.test(day);
+    datePredicate = (trade) => getTradeExportDate(trade) === day;
+    scopeName = day;
+  } else if (state.exportScope === "range") {
+    const from = refs.exportFromInput.value;
+    const to = refs.exportToInput.value;
+    valid = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to;
+    datePredicate = (trade) => {
+      const date = getTradeExportDate(trade);
+      return Boolean(date) && date >= from && date <= to;
+    };
+    scopeName = `${from}-to-${to}`;
+  }
+
+  const rows = valid ? state.trades.filter((trade) => modePredicate(trade) && datePredicate(trade)) : [];
+  const imageCount = rows.reduce(
+    (count, trade) => count + Number(Boolean(trade.before_image_id)) + Number(Boolean(trade.after_image_id)),
+    0
+  );
+  const modeSuffix = state.exportMode === "all" ? "" : `-${state.exportMode}`;
+  return { valid, rows, imageCount, name: `edge-forge-${scopeName}${modeSuffix}` };
+}
+
+function renderExportBuilder() {
+  const busy = Boolean(state.activeExportJob);
+  refs.exportScopeToggle.querySelectorAll("button[data-export-scope]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.exportScope === state.exportScope);
+    button.disabled = busy;
+  });
+  refs.exportModeToggle.querySelectorAll("button[data-export-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.exportMode === state.exportMode);
+    button.disabled = busy;
+  });
+  refs.exportDayWrap.hidden = state.exportScope !== "day";
+  refs.exportRangeWrap.hidden = state.exportScope !== "range";
+
+  const selection = getHistoryExportSelection();
+  refs.exportMatchCount.textContent = selection.valid
+    ? `${selection.rows.length} trade${selection.rows.length === 1 ? "" : "s"}`
+    : "Check date range";
+  refs.exportImageCount.textContent = `${selection.imageCount} screenshot${selection.imageCount === 1 ? "" : "s"}`;
+  refs.exportDayInput.disabled = busy;
+  refs.exportFromInput.disabled = busy;
+  refs.exportToInput.disabled = busy;
+  refs.exportFormatSelect.disabled = busy;
+  refs.closeExportBtn.disabled = busy;
+  refs.downloadExportBtn.disabled = busy || !selection.valid || selection.rows.length === 0;
+
+  const format = refs.exportFormatSelect.value;
+  refs.downloadExportBtn.textContent = format === "csv" ? "Download CSV" : format === "json" ? "Download JSON" : "Download package";
+}
+
+async function startHistoryExport() {
+  if (state.activeExportJob) {
+    return;
+  }
+  const selection = getHistoryExportSelection();
+  if (!selection.valid || !selection.rows.length) {
+    renderExportBuilder();
+    return;
+  }
+
+  const format = refs.exportFormatSelect.value;
+  if (format === "csv") {
+    exportCsvRows(selection.rows, selection.name);
+    return;
+  }
+  if (format === "json") {
+    exportJsonRows(selection.rows, selection.name);
+    return;
+  }
+
+  const imageWarningLimit = window.innerWidth <= 620 ? 60 : 150;
+  if (
+    selection.imageCount > imageWarningLimit &&
+    !window.confirm(`This package contains ${selection.imageCount} screenshots and may be large. Continue?`)
+  ) {
+    return;
+  }
+
+  const job = { cancelled: false };
+  state.activeExportJob = job;
+  refs.exportProgressWrap.hidden = false;
+  refs.cancelExportBtn.hidden = false;
+  refs.cancelExportBtn.disabled = false;
+  updateExportProgress("Preparing package...", 0);
+  renderExportBuilder();
+
+  try {
+    await exportTradeZip(selection.rows, selection.name, job);
+  } finally {
+    state.activeExportJob = null;
+    refs.cancelExportBtn.hidden = true;
+    refs.cancelExportBtn.disabled = false;
+    refs.exportProgressWrap.hidden = true;
+    renderExportBuilder();
+  }
+}
+
+function updateExportProgress(label, percent) {
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  refs.exportProgressText.textContent = label;
+  refs.exportProgressValue.textContent = `${value}%`;
+  refs.exportProgressBar.value = value;
 }
 
 function applyPillState(selector, activeBtn) {
@@ -1616,11 +1815,6 @@ function bindSettings() {
     showToast("Defaults saved");
   });
 
-  refs.exportLiveJsonBtn.addEventListener("click", () => exportJson((trade) => !trade.is_backtest, "edge-forge-live"));
-  refs.exportBacktestJsonBtn.addEventListener("click", () => exportJson((trade) => trade.is_backtest, "edge-forge-backtest"));
-  refs.exportAllJsonBtn.addEventListener("click", () => exportJson(() => true, "edge-forge-all"));
-  refs.exportLiveCsvBtn.addEventListener("click", () => exportCsv((trade) => !trade.is_backtest, "edge-forge-live"));
-  refs.exportBacktestCsvBtn.addEventListener("click", () => exportCsv((trade) => trade.is_backtest, "edge-forge-backtest"));
   refs.forceSyncBtn.addEventListener("click", forceSync);
   refs.downloadBackupBtn.addEventListener("click", async () => {
     try {
@@ -2168,6 +2362,14 @@ function getLocalWeekKey(input) {
   const year = start.getFullYear();
   const month = String(start.getMonth() + 1).padStart(2, "0");
   const day = String(start.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getLocalDateKey(input) {
+  const date = input instanceof Date ? input : new Date(input);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
@@ -2871,12 +3073,20 @@ async function backupLocalTrades({ download = false } = {}) {
   }
 }
 
-function exportJson(predicate, name) {
-  const rows = state.trades.filter(predicate);
-  downloadFile(`${name}-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(rows, null, 2), "application/json");
+function getTradeExportDate(trade) {
+  if (trade.is_backtest && /^\d{4}-\d{2}-\d{2}$/.test(String(trade.backtest_date || ""))) {
+    return trade.backtest_date;
+  }
+  const captured = new Date(trade.captured_at_utc || trade.created_at || "");
+  return Number.isNaN(captured.getTime()) ? "" : getLocalDateKey(captured);
 }
 
-function exportCsv(predicate, name) {
+function exportJsonRows(rows, name) {
+  downloadFile(`${name}.json`, JSON.stringify(rows, null, 2), "application/json");
+  showToast(`Downloaded ${rows.length} trade${rows.length === 1 ? "" : "s"}`);
+}
+
+function buildTradeCsv(rows) {
   const confluenceCols = [
     "liquidity_sweep",
     "mss_body_close",
@@ -2901,16 +3111,22 @@ function exportCsv(predicate, name) {
     "outcome",
     "pnl",
     "status",
+    "process_clean",
     "is_backtest",
+    "backtest_date",
     "captured_at_utc",
     "closed_at_utc",
+    "mood_open",
+    "mood_close",
     "note",
+    "before_image_id",
+    "after_image_id",
     ...confluenceCols,
   ];
   const numericCols = new Set(["entry_price", "lot_size", "pnl"]);
 
   const lines = [cols.join(",")];
-  state.trades.filter(predicate).forEach((trade) => {
+  rows.forEach((trade) => {
     const row = cols
       .map((col) => {
         let value = trade[col];
@@ -2918,6 +3134,8 @@ function exportCsv(predicate, name) {
           value = (trade.sessions || []).join("|");
         } else if (col === "is_backtest") {
           value = trade.is_backtest ? "TRUE" : "FALSE";
+        } else if (col === "process_clean") {
+          value = typeof trade.process_clean === "boolean" ? (trade.process_clean ? "TRUE" : "FALSE") : "";
         } else if (confluenceCols.includes(col)) {
           value = trade.confluences?.[col] ? "TRUE" : "FALSE";
         }
@@ -2930,11 +3148,163 @@ function exportCsv(predicate, name) {
     lines.push(row);
   });
 
-  downloadFile(`${name}-${new Date().toISOString().slice(0, 10)}.csv`, lines.join("\n"), "text/csv;charset=utf-8");
+  return lines.join("\n");
+}
+
+function exportCsvRows(rows, name) {
+  downloadFile(`${name}.csv`, buildTradeCsv(rows), "text/csv;charset=utf-8");
+  showToast(`Downloaded ${rows.length} trade${rows.length === 1 ? "" : "s"}`);
+}
+
+async function exportTradeZip(rows, name, job) {
+  try {
+    updateExportProgress("Loading package tools...", 2);
+    await loadZipLibrary();
+    assertExportActive(job);
+
+    const zip = new window.JSZip();
+    const root = zip.folder(name);
+    root.file("trades.json", JSON.stringify(rows, null, 2));
+    root.file("trades.csv", buildTradeCsv(rows));
+
+    const imageEntries = rows.flatMap((trade) =>
+      [
+        { kind: "before", id: trade.before_image_id },
+        { kind: "after", id: trade.after_image_id },
+      ]
+        .filter((entry) => entry.id)
+        .map((entry) => ({ ...entry, trade }))
+    );
+    const uniqueImageIds = [...new Set(imageEntries.map((entry) => entry.id))];
+    const imageBlobs = new Map();
+    let collected = 0;
+
+    await runWithConcurrency(uniqueImageIds, 4, async (imageId) => {
+      assertExportActive(job);
+      imageBlobs.set(imageId, await getImageBlob(imageId));
+      collected += 1;
+      const progress = uniqueImageIds.length ? 5 + (collected / uniqueImageIds.length) * 45 : 50;
+      updateExportProgress(`Collecting screenshots ${collected}/${uniqueImageIds.length}`, progress);
+      assertExportActive(job);
+    });
+
+    const manifest = {
+      exported_at: new Date().toISOString(),
+      trade_count: rows.length,
+      image_count: 0,
+      missing_image_count: 0,
+      images: [],
+    };
+
+    imageEntries.forEach(({ trade, kind, id }) => {
+      const blob = imageBlobs.get(id);
+      const tradeName = sanitizeFilePart(trade.trade_id || trade.id || "trade");
+      const tradeDate = getTradeExportDate(trade) || "unknown-date";
+      if (!blob) {
+        manifest.missing_image_count += 1;
+        manifest.images.push({ trade_id: trade.trade_id, kind, image_id: id, status: "missing" });
+        return;
+      }
+      const extension = getImageExtension(blob.type);
+      const path = `images/${tradeDate}/${tradeName}/${kind}.${extension}`;
+      root.file(path, blob);
+      manifest.image_count += 1;
+      manifest.images.push({ trade_id: trade.trade_id, kind, image_id: id, path, status: "included" });
+    });
+
+    assertExportActive(job);
+    root.file("image-manifest.json", JSON.stringify(manifest, null, 2));
+    const zipBlob = await zip.generateAsync(
+      { type: "blob", compression: "DEFLATE", compressionOptions: { level: 6 } },
+      ({ percent }) => {
+        assertExportActive(job);
+        updateExportProgress("Packing archive...", 50 + percent / 2);
+      }
+    );
+    assertExportActive(job);
+    downloadBlob(`${name}.zip`, zipBlob);
+    const missingText = manifest.missing_image_count ? ` · ${manifest.missing_image_count} missing` : "";
+    showToast(`ZIP downloaded · ${rows.length} trades · ${manifest.image_count} images${missingText}`);
+  } catch (error) {
+    if (error?.name === "ExportCancelledError") {
+      showToast("Export canceled");
+      return;
+    }
+    console.error(error);
+    showToast("ZIP export failed - try again");
+  }
+}
+
+let zipLibraryPromise = null;
+
+async function loadZipLibrary() {
+  if (typeof window.JSZip === "function") {
+    return;
+  }
+  if (!zipLibraryPromise) {
+    zipLibraryPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "assets/vendor/jszip.min.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error("ZIP library failed to load"));
+      document.head.appendChild(script);
+    }).catch((error) => {
+      zipLibraryPromise = null;
+      throw error;
+    });
+  }
+  await zipLibraryPromise;
+  if (typeof window.JSZip !== "function") {
+    throw new Error("ZIP library unavailable");
+  }
+}
+
+function assertExportActive(job) {
+  if (job.cancelled) {
+    const error = new Error("Export canceled");
+    error.name = "ExportCancelledError";
+    throw error;
+  }
+}
+
+async function runWithConcurrency(items, limit, worker) {
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      await worker(items[index]);
+    }
+  });
+  await Promise.all(runners);
+}
+
+function sanitizeFilePart(value) {
+  return String(value || "trade")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "trade";
+}
+
+function getImageExtension(type) {
+  if (type === "image/jpeg") {
+    return "jpg";
+  }
+  if (type === "image/webp") {
+    return "webp";
+  }
+  if (type === "image/gif") {
+    return "gif";
+  }
+  return "png";
 }
 
 function downloadFile(filename, content, type) {
-  const blob = new Blob([content], { type });
+  downloadBlob(filename, new Blob([content], { type }));
+}
+
+function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -2942,7 +3312,7 @@ function downloadFile(filename, content, type) {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function createDbApi() {

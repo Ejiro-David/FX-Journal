@@ -190,6 +190,18 @@ p {
   gap: 7px;
 }
 
+.history-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.history-export-btn {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
 .today-tally {
   color: var(--text-secondary);
   font-family: var(--font-mono);
@@ -1211,6 +1223,85 @@ button:disabled {
   padding: 16px;
 }
 
+.export-modal-card {
+  width: min(560px, 100%);
+}
+
+.export-builder {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.export-scope-toggle {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#exportModeToggle {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#exportModeToggle .seg-btn {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.export-scope-toggle .seg-btn {
+  min-width: 0;
+  padding: 10px 8px;
+  font-size: 12px;
+}
+
+.export-date-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.export-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 12px 0;
+}
+
+.export-summary strong {
+  font-family: var(--font-mono);
+  font-size: 15px;
+}
+
+.export-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.export-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.export-progress progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--color-info);
+}
+
+.export-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.export-actions #cancelExportBtn[hidden] + #downloadExportBtn {
+  grid-column: 1 / -1;
+}
+
 .modal-head,
 .modal-actions {
   display: flex;
@@ -1504,8 +1595,16 @@ button:disabled {
     justify-items: start;
   }
 
+  .history-header-actions {
+    justify-content: flex-start;
+  }
+
   .circuit-breaker-state {
     text-align: left;
+  }
+
+  .export-date-range {
+    grid-template-columns: 1fr;
   }
 
 }

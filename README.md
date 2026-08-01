@@ -33,13 +33,15 @@ Private, local-first forex trade capture ledger for fast setup logging, screensh
   - required closing journal and process score
   - weekly process adherence and week P&L from a saved week-start balance
   - non-blocking day-complete state after two wins or two losses
+  - single-day, date-range, or all-history export
+  - explicit All, Live, or Backtest export scope
+  - CSV, JSON, or complete ZIP packages with screenshots
   - trade detail modal
   - edit and guarded delete
 - Settings:
   - pairs and sessions
   - defaults
   - backtest mode
-  - JSON/CSV export
   - Supabase magic-link auth and force sync
 
 ## Data Model Highlights
@@ -105,4 +107,6 @@ Playwright currently requires Node.js 18 or newer.
 - The app is intentionally local-first.
 - Cloud sync should never block trade capture.
 - Screenshots are stored as local blobs first, then uploaded to Supabase storage when sync is available.
+- ZIP exports include `trades.json`, `trades.csv`, `image-manifest.json`, and date/trade-organized screenshots under `images/`. Missing cloud images are reported in the manifest instead of failing the whole export.
+- The ZIP engine is vendored locally and loaded only when a complete package is requested.
 - Process stats use live trades closed from local Monday 00:00 through the current time; legacy unscored trades are excluded from the adherence denominator.
